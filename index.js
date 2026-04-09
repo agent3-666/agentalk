@@ -8,6 +8,7 @@ import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, requestStop, stopSignal } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
+import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, CONFIG_PATH } from "./lib/config.js";
 
 // ─── Parse CLI args ─────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -44,17 +45,12 @@ if (flagFromClaude) {
 
 // ─── Banner ─────────────────────────────────────────────────────────
 function printBanner() {
-  console.log(
-    chalk.bold(`
- ╔══════════════════════════════════════════════════════╗
- ║           🤖  AgentTalking  v2.0                    ║
- ║  Claude · Codex · Gemini · ${AGENTS.opencode.name}  ·  共享上下文  ║
- ╚══════════════════════════════════════════════════════╝
-`)
-  );
+  const activeNames = Object.values(AGENTS).map(a => a.name).join(" · ");
+  console.log(chalk.bold(`\n 🤖  AgentTalking  v2.0  ·  ${activeNames}\n`));
+  const keys = Object.keys(AGENTS).map(k => `@${k}`).join(" / ");
   console.log(chalk.dim("  消息路由:"));
-  console.log(chalk.dim("    @claude / @codex / @gemini / @opencode <msg>  定向发送"));
-  console.log(chalk.dim("    <msg>                                         广播给全部"));
+  console.log(chalk.dim(`    ${keys}  定向发送`));
+  console.log(chalk.dim("    <msg>                广播给全部"));
   console.log(chalk.dim("  讨论模式:"));
   console.log(chalk.dim("    /discuss [@a @b] [--rounds N] <topic>   并行讨论"));
   console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic>   串行辩论（接力）"));
@@ -68,6 +64,13 @@ function printBanner() {
   console.log(chalk.dim("    /inject     注入当前目录 claude 会话"));
   console.log(chalk.dim("    /clear      清空上下文"));
   console.log(chalk.dim("    /save /load 手动存档/读档"));
+  console.log(chalk.dim("  Agent 管理:"));
+  console.log(chalk.dim("    /agents                  列出所有 agents 及状态"));
+  console.log(chalk.dim("    /agents enable <key>     启用 agent"));
+  console.log(chalk.dim("    /agents disable <key>    禁用 agent"));
+  console.log(chalk.dim("    /agents add              交互式添加自定义 agent"));
+  console.log(chalk.dim("    /agents remove <key>     删除 agent"));
+  console.log(chalk.dim(`    config: ${CONFIG_PATH}`));
   console.log(chalk.dim("  启动参数:"));
   console.log(chalk.dim("    -c / --continue   续接上次会话"));
   console.log(chalk.dim("    --from-claude     启动时注入 claude 会话"));
@@ -78,11 +81,12 @@ if (flagHelp) { printBanner(); process.exit(0); }
 
 // ─── Parse @mentions ─────────────────────────────────────────────────
 function parseMentions(input) {
-  const mentionRe = /@(claude|codex|gemini|opencode)\b/gi;
+  const allKeys = Object.keys(AGENTS).join("|");
+  const mentionRe = new RegExp(`@(${allKeys})\\b`, "gi");
   const targets = [];
   let m;
   while ((m = mentionRe.exec(input)) !== null) targets.push(m[1].toLowerCase());
-  const prompt = input.replace(mentionRe, "").trim();
+  const prompt = input.replace(new RegExp(`@(${allKeys})\\b`, "gi"), "").trim();
   return { targets: [...new Set(targets)], prompt };
 }
 
@@ -92,11 +96,12 @@ function parseDiscussArgs(input, cmd) {
   let max = cmd === "/discuss" ? 8 : 12;
 
   // Extract @mentions for agent selection
-  const mentionRe = /@(claude|codex|gemini|opencode)\b/gi;
+  const allKeys = Object.keys(AGENTS).join("|");
+  const mentionRe = new RegExp(`@(${allKeys})\\b`, "gi");
   const mentioned = [];
   let m;
   while ((m = mentionRe.exec(rest)) !== null) mentioned.push(m[1].toLowerCase());
-  rest = rest.replace(mentionRe, "").trim();
+  rest = rest.replace(new RegExp(`@(${allKeys})\\b`, "gi"), "").trim();
   const agents = mentioned.length > 0 ? [...new Set(mentioned)] : null; // null = all
 
   // Extract --rounds / --turns
@@ -105,6 +110,107 @@ function parseDiscussArgs(input, cmd) {
   if (numMatch) { max = parseInt(numMatch[1]); topic = numMatch[2].trim(); }
 
   return { max, topic, agents };
+}
+
+// ─── /agents command ────────────────────────────────────────────────
+async function handleAgentsCommand(sub) {
+  const parts = sub.split(/\s+/).filter(Boolean);
+  const subcmd = parts[0];
+
+  // /agents — list all
+  if (!subcmd) {
+    const all = listAgents();
+    console.log(chalk.bold("\n  Agent 列表:\n"));
+    for (const a of all) {
+      const active = AGENTS[a.key];
+      const status = !a.installed
+        ? chalk.red("未安装")
+        : a.enabled
+        ? chalk.green("已启用")
+        : chalk.dim("已禁用");
+      const inUse = active ? chalk.cyan(" ◀ 运行中") : "";
+      console.log(`  ${chalk.bold(a.key.padEnd(12))} ${status}${inUse}`);
+      console.log(`    ${chalk.dim(`${a.cmd}  ${a.note || ""}`)}`);
+    }
+    console.log(chalk.dim(`\n  配置文件: ${CONFIG_PATH}\n`));
+    return;
+  }
+
+  if (subcmd === "enable" && parts[1]) {
+    const r = enableAgent(parts[1]);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    return;
+  }
+
+  if (subcmd === "disable" && parts[1]) {
+    const r = disableAgent(parts[1]);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    return;
+  }
+
+  if (subcmd === "remove" && parts[1]) {
+    const r = removeAgent(parts[1]);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    return;
+  }
+
+  if (subcmd === "add") {
+    // Interactive wizard
+    const answers = await wizard([
+      { key: "key",   prompt: "唯一 key（英文，如 mygpt）: " },
+      { key: "name",  prompt: "显示名称（如 GPT-4o）: " },
+      { key: "cmd",   prompt: "命令（如 mycli）: " },
+      { key: "args",  prompt: "参数，用 {prompt} 代表用户输入（如: -p {prompt}）: " },
+      { key: "color", prompt: "颜色 hex（如 #FF6B6B，留空用默认）: " },
+      { key: "output",prompt: "输出格式 text 或 ndjson（留空默认 text）: " },
+      { key: "note",  prompt: "备注说明（可选）: " },
+    ]);
+
+    const def = {
+      key: answers.key.trim(),
+      name: answers.name.trim(),
+      cmd: answers.cmd.trim(),
+      args: answers.args.trim().split(/\s+/),
+      color: answers.color.trim() || "#6B7280",
+      output: answers.output.trim() || "text",
+      note: answers.note.trim(),
+    };
+
+    if (!def.key || !def.name || !def.cmd) {
+      console.log(chalk.red("key / name / cmd 不能为空"));
+      return;
+    }
+
+    const r = addAgent(def);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    return;
+  }
+
+  console.log(chalk.red("用法: /agents [enable|disable|add|remove] [key]"));
+}
+
+// Simple readline wizard for multi-field input
+function wizard(fields) {
+  return new Promise((resolve) => {
+    const answers = {};
+    let i = 0;
+    const ask = () => {
+      if (i >= fields.length) { resolve(answers); return; }
+      process.stdout.write(chalk.cyan(`  ${fields[i].prompt}`));
+    };
+    ask();
+    // Temporarily hook stdin
+    const tmpRl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+    tmpRl.on("line", (line) => {
+      answers[fields[i].key] = line;
+      i++;
+      if (i < fields.length) { ask(); }
+      else { tmpRl.close(); resolve(answers); }
+    });
+  });
 }
 
 // ─── Handle one input line ───────────────────────────────────────────
@@ -135,6 +241,11 @@ async function handleLine(input) {
   if (input === "/context" || input === "/ctx") {
     const s = ctx.stats();
     console.log(chalk.dim(`上下文: ${s.messages} 条消息 · ${s.chars.toLocaleString()} 字符 · ~${s.tokens.toLocaleString()} tokens`));
+    return;
+  }
+
+  if (input.startsWith("/agents")) {
+    await handleAgentsCommand(input.slice(7).trim());
     return;
   }
 
