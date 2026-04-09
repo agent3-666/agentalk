@@ -8,7 +8,7 @@ import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, requestStop, stopSignal } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
-import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, resetConfig, CONFIG_PATH } from "./lib/config.js";
+import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, CONFIG_PATH } from "./lib/config.js";
 
 // ─── Parse CLI args ─────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -68,6 +68,8 @@ function printBanner() {
   console.log(chalk.dim("    /agents                  列出所有 agents 及状态"));
   console.log(chalk.dim("    /agents enable <key>     启用 agent"));
   console.log(chalk.dim("    /agents disable <key>    禁用 agent"));
+  console.log(chalk.dim("    /agents model <key> <m>  设置 agent 使用的模型"));
+  console.log(chalk.dim("    /agents model <key>      重置为默认模型"));
   console.log(chalk.dim("    /agents add              交互式添加自定义 agent"));
   console.log(chalk.dim("    /agents remove <key>     删除 agent"));
   console.log(chalk.dim(`    config: ${CONFIG_PATH}`));
@@ -129,7 +131,8 @@ async function handleAgentsCommand(sub) {
         ? chalk.green("已启用")
         : chalk.dim("已禁用");
       const inUse = active ? chalk.cyan(" ◀ 运行中") : "";
-      console.log(`  ${chalk.bold(a.key.padEnd(12))} ${status}${inUse}`);
+      const modelInfo = a.model ? chalk.yellow(` [model: ${a.model}]`) : "";
+      console.log(`  ${chalk.bold(a.key.padEnd(12))} ${status}${inUse}${modelInfo}`);
       console.log(`    ${chalk.dim(`${a.cmd}  ${a.note || ""}`)}`);
     }
     console.log(chalk.dim(`\n  配置文件: ${CONFIG_PATH}\n`));
@@ -145,6 +148,14 @@ async function handleAgentsCommand(sub) {
 
   if (subcmd === "disable" && parts[1]) {
     const r = disableAgent(parts[1]);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
+    return;
+  }
+
+  if (subcmd === "model" && parts[1]) {
+    const model = parts.slice(2).join(" ") || null; // empty = reset to default
+    const r = setAgentModel(parts[1], model);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
     if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
     return;
@@ -195,7 +206,7 @@ async function handleAgentsCommand(sub) {
     return;
   }
 
-  console.log(chalk.red("用法: /agents [enable|disable|add|remove] [key]"));
+  console.log(chalk.red("用法: /agents [enable|disable|model|add|remove] [key] [value]"));
 }
 
 // Simple readline wizard for multi-field input
