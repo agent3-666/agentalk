@@ -8,7 +8,7 @@ import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, requestStop, stopSignal } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
-import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, CONFIG_PATH } from "./lib/config.js";
+import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, resetConfig, CONFIG_PATH } from "./lib/config.js";
 
 // ─── Parse CLI args ─────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -147,6 +147,12 @@ async function handleAgentsCommand(sub) {
     const r = disableAgent(parts[1]);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
     if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    return;
+  }
+
+  if (subcmd === "reset") {
+    resetConfig();
+    console.log(chalk.green("配置已重置为默认值，重启 agentalking 后生效"));
     return;
   }
 
