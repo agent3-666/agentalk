@@ -1,4 +1,4 @@
-# AgentTalking
+# AgentTalk
 
 A unified terminal interface to chat with **Claude Code**, **Codex CLI**, **Gemini CLI**, and **OpenCode** simultaneously — with shared context, multi-round discussions, and auto-convergence.
 
@@ -27,18 +27,18 @@ opencode  # OpenCode CLI
 ## Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/Agent3_agentalking
-cd Agent3_agentalking
+git clone https://github.com/agent3-666/agentalk.git
+cd agentalk
 npm install
-npm link        # makes `agentalking` available globally
+npm link        # makes `agentalk` available globally
 ```
 
 ## Usage
 
 ```bash
-agentalking                   # start interactive REPL
-agentalking -c                # continue last session (per directory)
-agentalking --from-claude     # inject current Claude Code session as context
+agentalk                   # start interactive REPL
+agentalk -c                # continue last session (per directory)
+agentalk --from-claude     # inject current Claude Code session as context
 ```
 
 ### In the REPL
@@ -85,9 +85,9 @@ Each CLI is called in non-interactive (print) mode:
 - `gemini -p "..."`
 - `opencode run "..." --format json`
 
-AgentTalking manages a shared `messages[]` context that gets prepended to every prompt. This means all agents share the same conversation history regardless of their own session state.
+AgentTalk manages a shared `messages[]` context that gets prepended to every prompt. This means all agents share the same conversation history regardless of their own session state.
 
-Sessions are saved to `~/.agentalking/sessions/` per directory, and Claude Code sessions are read from `~/.claude/projects/`.
+Sessions are saved to `~/.agentalk/sessions/` per directory, and Claude Code sessions are read from `~/.claude/projects/`.
 
 ## License
 

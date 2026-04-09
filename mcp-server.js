@@ -39,7 +39,7 @@ function buildTranscript(messages) {
 
 // ─── MCP Server ──────────────────────────────────────────────────────
 const server = new Server(
-  { name: "agentalking", version: "2.0.0" },
+  { name: "agentalk", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
 

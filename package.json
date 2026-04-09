@@ -1,11 +1,11 @@
 {
-  "name": "agent3_agentalking",
+  "name": "agentalk",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
   "bin": {
-    "agentalking": "./index.js",
-    "agentalking-mcp": "./mcp-server.js"
+    "agentalk": "./index.js",
+    "agentalk-mcp": "./mcp-server.js"
   },
   "scripts": {
     "start": "node index.js",

@@ -139,20 +139,20 @@ async function handleAgentsCommand(sub) {
   if (subcmd === "enable" && parts[1]) {
     const r = enableAgent(parts[1]);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
     return;
   }
 
   if (subcmd === "disable" && parts[1]) {
     const r = disableAgent(parts[1]);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
     return;
   }
 
   if (subcmd === "reset") {
     resetConfig();
-    console.log(chalk.green("配置已重置为默认值，重启 agentalking 后生效"));
+    console.log(chalk.green("配置已重置为默认值，重启 agentalk 后生效"));
     return;
   }
 
@@ -191,7 +191,7 @@ async function handleAgentsCommand(sub) {
 
     const r = addAgent(def);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalking 后生效"));
+    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
     return;
   }
 
@@ -257,12 +257,12 @@ async function handleLine(input) {
 
   if (input === "/export") {
     if (ctx.messages.length === 0) { console.log(chalk.yellow("上下文为空，无可导出内容")); return; }
-    const dir = join(homedir(), ".agentalking", "exports");
+    const dir = join(homedir(), ".agentalk", "exports");
     mkdirSync(dir, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filepath = join(dir, `agentalking-${ts}.md`);
+    const filepath = join(dir, `agentalk-${ts}.md`);
     const lines = [
-      `# AgentTalking Export`,
+      `# AgentTalk Export`,
       `> ${new Date().toLocaleString()}  ·  ${process.cwd()}\n`,
     ];
     for (const m of ctx.messages) {
