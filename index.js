@@ -6,9 +6,10 @@ import { homedir } from "os";
 import chalk from "chalk";
 import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
-import { discuss, debate, broadcast, requestStop, stopSignal } from "./lib/discuss.js";
+import { discuss, debate, broadcast, requestStop, stopSignal, pushUserInput, saveSummary } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, CONFIG_PATH } from "./lib/config.js";
+import { createRepl } from "./lib/input.js";
 
 // ─── Parse CLI args ─────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -24,7 +25,27 @@ if (flagContinue) {
   const loaded = ctx.load();
   if (loaded) {
     const s = ctx.stats();
-    console.log(chalk.dim(`[续接会话] ${s.messages} 条消息，约 ${s.tokens.toLocaleString()} tokens`));
+    console.log(chalk.dim(`\n[续接会话] ${s.messages} 条消息，约 ${s.tokens.toLocaleString()} tokens\n`));
+    // Replay conversation history so user can see what was discussed
+    for (const m of ctx.messages) {
+      if (m.role === "user") {
+        console.log(`${chalk.bold.white("👤 You:")} ${chalk.white(m.content.length > 200 ? m.content.slice(0, 200) + "..." : m.content)}`);
+      } else if (m.role === "system") {
+        console.log(`${chalk.white("📋 " + (m.content.length > 200 ? m.content.slice(0, 200) + "..." : m.content))}`);
+      } else {
+        const agent = AGENTS[m.role];
+        const label = agent ? agent.label : chalk.cyan(m.role);
+        const preview = m.content.length > 300 ? m.content.slice(0, 300) + "..." : m.content;
+        const color = agent ? agent.color : chalk.white;
+        console.log(`${label}`);
+        for (const line of preview.split("\n")) {
+          if (line.trim()) console.log(`${color("│")} ${chalk.white(line)}`);
+        }
+        console.log(`${color("╰")} ${chalk.dim("(历史)")}`);
+      }
+    }
+    console.log(chalk.dim(`\n${"─".repeat(60)}`));
+    console.log(chalk.dim("以上为历史记录，继续对话即可\n"));
   } else {
     console.log(chalk.dim("[续接会话] 未找到历史，开始新会话"));
   }
@@ -45,15 +66,17 @@ if (flagFromClaude) {
 
 // ─── Banner ─────────────────────────────────────────────────────────
 function printBanner() {
-  const activeNames = Object.values(AGENTS).map(a => a.name).join(" · ");
+  const activeNames = Object.values(AGENTS).map(a => a.displayName).join(" · ");
   console.log(chalk.bold(`\n 🤖  AgentTalking  v2.0  ·  ${activeNames}\n`));
   const keys = Object.keys(AGENTS).map(k => `@${k}`).join(" / ");
-  console.log(chalk.dim("  消息路由:"));
+  console.log(chalk.dim("  默认模式（串行讨论）:"));
+  console.log(chalk.dim("    <msg>                每个 agent 依次发言，后者基于前者"));
   console.log(chalk.dim(`    ${keys}  定向发送`));
-  console.log(chalk.dim("    <msg>                广播给全部"));
-  console.log(chalk.dim("  讨论模式:"));
+  console.log(chalk.dim("    讨论中直接输入      插入你的观点，下位 agent 可见"));
+  console.log(chalk.dim("  更多模式:"));
+  console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic>   多轮串行辩论"));
   console.log(chalk.dim("    /discuss [@a @b] [--rounds N] <topic>   并行讨论"));
-  console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic>   串行辩论（接力）"));
+  console.log(chalk.dim("    /broadcast <msg>     并行广播（不讨论）"));
   console.log(chalk.dim("  停止讨论:"));
   console.log(chalk.dim("    s + 回车    优雅停止（生成摘要）"));
   console.log(chalk.dim("    Ctrl+C      立即停止"));
@@ -212,6 +235,9 @@ async function handleAgentsCommand(sub) {
 // Simple readline wizard for multi-field input
 function wizard(fields) {
   return new Promise((resolve) => {
+    // Temporarily exit raw mode for readline wizard
+    if (process.stdin.isTTY && process.stdin.isRaw) process.stdin.setRawMode(false);
+
     const answers = {};
     let i = 0;
     const ask = () => {
@@ -219,39 +245,82 @@ function wizard(fields) {
       process.stdout.write(chalk.cyan(`  ${fields[i].prompt}`));
     };
     ask();
-    // Temporarily hook stdin
-    const tmpRl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
+    const tmpRl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
     tmpRl.on("line", (line) => {
       answers[fields[i].key] = line;
       i++;
       if (i < fields.length) { ask(); }
-      else { tmpRl.close(); resolve(answers); }
+      else {
+        tmpRl.close();
+        // Re-enter raw mode
+        if (process.stdin.isTTY) process.stdin.setRawMode(true);
+        resolve(answers);
+      }
     });
   });
+}
+
+// ─── Save summary and show path ─────────────────────────────────────
+function logSummary(ctx, topic, agentKeys) {
+  const filepath = saveSummary(ctx, topic, agentKeys);
+  if (filepath) console.log(chalk.dim(`\n📄 摘要已保存: ${filepath}`));
 }
 
 // ─── Handle one input line ───────────────────────────────────────────
 async function handleLine(input) {
   if (!input.trim()) return;
 
-  // 's' during discussion = graceful stop
-  if (input === "s" && pending > 0) {
-    requestStop();
-    console.log(chalk.yellow("\n[停止信号已发送，等待当前步骤完成...]"));
+  // During active discussion: 's'/'S' = stop, anything else = user interjection
+  if (pending > 1) {
+    if (input.toLowerCase() === "s") {
+      requestStop();
+      console.log(chalk.yellow("\n[停止信号已发送，等待当前步骤完成...]"));
+    } else {
+      pushUserInput(input);
+      console.log(chalk.dim("[已记录，下一位 agent 将看到你的输入]"));
+    }
+    return;
+  }
+
+  // "/" alone → show command hints
+  if (input === "/") {
+    const cmds = [
+      ["/debate  <topic>",   "多轮串行辩论"],
+      ["/discuss <topic>",   "并行讨论"],
+      ["/broadcast <msg>",   "并行广播（不讨论）"],
+      ["/context",           "查看上下文统计"],
+      ["/export",            "导出为 Markdown"],
+      ["/last",              "查看上次结论"],
+      ["/inject",            "注入 Claude 会话"],
+      ["/clear",             "清空上下文"],
+      ["/save / /load",      "存档 / 读档"],
+      ["/agents",            "管理 agents"],
+      ["/help",              "完整帮助"],
+      ["/quit",              "退出"],
+    ];
+    console.log("");
+    for (const [cmd, desc] of cmds) {
+      console.log(`  ${chalk.cyan(cmd.padEnd(22))} ${chalk.dim(desc)}`);
+    }
+    console.log("");
     return;
   }
 
   if (input.startsWith("/discuss")) {
     const { max, topic, agents } = parseDiscussArgs(input, "/discuss");
     if (!topic) { console.log(chalk.red("用法: /discuss [@agent...] <话题>")); return; }
+    const usedAgents = agents || Object.keys(AGENTS);
     await discuss(topic, ctx, { maxRounds: max, ...(agents && { agents }) });
+    logSummary(ctx, topic, usedAgents);
     return;
   }
 
   if (input.startsWith("/debate")) {
     const { max, topic, agents } = parseDiscussArgs(input, "/debate");
     if (!topic) { console.log(chalk.red("用法: /debate [@agent...] <话题>")); return; }
+    const usedAgents = agents || Object.keys(AGENTS);
     await debate(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
+    logSummary(ctx, topic, usedAgents);
     return;
   }
 
@@ -329,11 +398,30 @@ async function handleLine(input) {
     console.log(chalk.dim("\nBye! 👋")); process.exit(0);
   }
 
-  // @mention 路由 or broadcast
+  // Unknown slash command — catch before falling through to debate
+  if (input.startsWith("/") && !input.startsWith("/broadcast") && !input.startsWith("/bc ")) {
+    console.log(chalk.red(`未知命令: ${input.split(" ")[0]}`));
+    console.log(chalk.dim("输入 /help 查看所有命令，或输入 / 快速浏览"));
+    return;
+  }
+
+  // /broadcast — explicit parallel mode
+  if (input.startsWith("/broadcast ") || input.startsWith("/bc ")) {
+    const msg = input.replace(/^\/(broadcast|bc)\s+/, "").trim();
+    if (!msg) { console.log(chalk.red("用法: /broadcast <消息>")); return; }
+    const { targets, prompt } = parseMentions(msg);
+    const sendTo = targets.length > 0 ? targets : Object.keys(AGENTS);
+    await broadcast(prompt || msg, ctx, sendTo);
+    logSummary(ctx, prompt || msg, sendTo);
+    return;
+  }
+
+  // Default: serial debate (each agent speaks once, building on previous)
   const { targets, prompt } = parseMentions(input);
   if (!prompt) { console.log(chalk.red("请输入消息内容")); return; }
   const sendTo = targets.length > 0 ? targets : Object.keys(AGENTS);
-  await broadcast(prompt, ctx, sendTo);
+  await debate(prompt, ctx, { maxTurns: sendTo.length, agents: sendTo, noJudge: true });
+  logSummary(ctx, prompt, sendTo);
 }
 
 // ─── Single-shot mode ────────────────────────────────────────────────
@@ -342,44 +430,48 @@ if (inlineMsg) {
   process.exit(0);
 }
 
+// ─── Command definitions for autocomplete ───────────────────────────
+const REPL_COMMANDS = [
+  ["/debate",    "多轮串行辩论"],
+  ["/discuss",   "并行讨论"],
+  ["/broadcast", "并行广播（不讨论）"],
+  ["/context",   "查看上下文统计"],
+  ["/export",    "导出为 Markdown"],
+  ["/last",      "查看上次结论"],
+  ["/inject",    "注入 Claude 会话"],
+  ["/clear",     "清空上下文"],
+  ["/save",      "保存会话"],
+  ["/load",      "加载会话"],
+  ["/agents",    "管理 agents"],
+  ["/help",      "完整帮助"],
+  ["/quit",      "退出"],
+  ...Object.keys(AGENTS).map(k => [`@${k}`, `发送给 ${AGENTS[k].name}`]),
+];
+
 // ─── Interactive REPL ────────────────────────────────────────────────
 printBanner();
 
-const rl = createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: chalk.bold.white("You > "),
-});
-
-rl.prompt();
-
 let pending = 0;
-let stdinClosed = false;
 
-// Ctrl+C: if discussion running → graceful stop, else exit
-process.on("SIGINT", () => {
-  if (pending > 0) {
+const repl = createRepl({
+  prompt: "You > ",
+  commands: REPL_COMMANDS,
+  agents: AGENTS,
+  onLine: async (line) => {
+    if (!line) return;
+    pending++;
+    if (pending === 1) repl.pause();   // only set up scroll region on first entry
+    try {
+      await handleLine(line);
+    } catch (err) {
+      console.log(chalk.red(`Error: ${err.message}`));
+    }
+    pending--;
+    if (pending === 0) repl.showPrompt();  // only tear down when fully done
+  },
+  onSigint: () => {
+    // Only called during active discussion (paused state in input.js)
     console.log(chalk.yellow("\n[Ctrl+C] 发送停止信号..."));
     requestStop();
-  } else {
-    console.log(chalk.dim("\nBye! 👋"));
-    process.exit(0);
-  }
-});
-
-rl.on("line", async (line) => {
-  pending++;
-  try {
-    await handleLine(line.trim());
-  } catch (err) {
-    console.log(chalk.red(`Error: ${err.message}`));
-  }
-  pending--;
-  if (stdinClosed && pending === 0) process.exit(0);
-  rl.prompt();
-});
-
-rl.on("close", () => {
-  stdinClosed = true;
-  if (pending === 0) { console.log(chalk.dim("\nBye! 👋")); process.exit(0); }
+  },
 });
