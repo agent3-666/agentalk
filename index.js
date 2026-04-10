@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createInterface } from "readline";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import chalk from "chalk";
@@ -110,6 +110,11 @@ function parseDiscussArgs(input, cmd) {
   const numMatch = rest.match(/^--(?:rounds|turns)\s+(\d+)\s+([\s\S]+)/);
   let topic = rest;
   if (numMatch) { max = parseInt(numMatch[1]); topic = numMatch[2].trim(); }
+
+  // If topic looks like a file path, read its content
+  if (topic && existsSync(topic)) {
+    topic = readFileSync(topic, "utf8");
+  }
 
   return { max, topic, agents };
 }
