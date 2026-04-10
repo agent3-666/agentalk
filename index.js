@@ -8,7 +8,7 @@ import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, requestStop, stopSignal, pushUserInput, saveSummary } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
-import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, CONFIG_PATH } from "./lib/config.js";
+import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, getGlobalTimeout, setGlobalTimeout, setAgentTimeout, CONFIG_PATH } from "./lib/config.js";
 import { createRepl } from "./lib/input.js";
 import { loadLang, setLang, getLang, t } from "./lib/i18n.js";
 
@@ -100,6 +100,7 @@ function printBanner() {
   console.log(chalk.dim(`    ${t("banner.agents_remove")}`));
   console.log(chalk.dim(`    ${t("banner.agents_moderator")}`));
   console.log(chalk.dim(`    ${t("banner.agents_order")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_timeout")}`));
   console.log(chalk.dim(`    ${t("banner.config_path", { path: CONFIG_PATH })}`));
   console.log(chalk.dim(`    ${t("banner.lang_hint")}`));
   console.log(chalk.dim(`  ${t("banner.startup_header")}`));
@@ -216,6 +217,25 @@ async function handleAgentsCommand(sub) {
     return;
   }
 
+  if (subcmd === "timeout") {
+    if (parts.length === 1) {
+      const s = getGlobalTimeout();
+      console.log(chalk.dim(t("agents.timeout_current", { s })));
+      return;
+    }
+    const isNum = /^\d+$/.test(parts[1]);
+    if (isNum) {
+      const r = setGlobalTimeout(parts[1]);
+      console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+      return;
+    }
+    // per-agent: /agents timeout <key> [<s>|reset]
+    const val = (parts[2] === "reset" || !parts[2]) ? null : parts[2];
+    const r = setAgentTimeout(parts[1], val);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    return;
+  }
+
   if (subcmd === "reset") {
     resetConfig();
     console.log(chalk.green(t("agents.reset_done")));
@@ -327,6 +347,7 @@ async function handleLine(input) {
       ["/agents",            t("cmd.agents")],
       ["/agents moderator",  t("cmd.agents_moderator")],
       ["/agents order",      t("cmd.agents_order")],
+      ["/agents timeout",    t("cmd.agents_timeout")],
       ["/lang en|zh",        t("cmd.lang")],
       ["/help",              t("cmd.help")],
       ["/quit",              t("cmd.quit")],
