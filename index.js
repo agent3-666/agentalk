@@ -52,8 +52,8 @@ function printBanner() {
   console.log(chalk.dim(`    ${keys}  定向发送`));
   console.log(chalk.dim("    <msg>                广播给全部"));
   console.log(chalk.dim("  讨论模式:"));
-  console.log(chalk.dim("    /discuss [@a @b] [--rounds N] <topic>   并行讨论"));
-  console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic>   串行辩论（接力）"));
+  console.log(chalk.dim("    /discuss [@a @b] [--rounds N] <topic|file>  并行讨论"));
+  console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic|file>  串行辩论（接力）"));
   console.log(chalk.dim("  停止讨论:"));
   console.log(chalk.dim("    s + 回车    优雅停止（生成摘要）"));
   console.log(chalk.dim("    /add <msg>  讨论中追加补充信息"));
@@ -258,14 +258,14 @@ async function handleLine(input) {
 
   if (input.startsWith("/discuss")) {
     const { max, topic, agents } = parseDiscussArgs(input, "/discuss");
-    if (!topic) { console.log(chalk.red("用法: /discuss [@agent...] <话题>")); return; }
+    if (!topic) { console.log(chalk.red("用法: /discuss [@agent...] [--rounds N] <话题|文件路径>")); return; }
     await discuss(topic, ctx, { maxRounds: max, ...(agents && { agents }) });
     return;
   }
 
   if (input.startsWith("/debate")) {
     const { max, topic, agents } = parseDiscussArgs(input, "/debate");
-    if (!topic) { console.log(chalk.red("用法: /debate [@agent...] <话题>")); return; }
+    if (!topic) { console.log(chalk.red("用法: /debate [@agent...] [--turns N] <话题|文件路径>")); return; }
     await debate(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
     return;
   }
