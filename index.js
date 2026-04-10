@@ -59,7 +59,7 @@ function printBanner() {
   console.log(chalk.dim("    Ctrl+C      立即停止"));
   console.log(chalk.dim("  上下文与导出:"));
   console.log(chalk.dim("    /context    查看上下文统计"));
-  console.log(chalk.dim("    /export     导出讨论为 Markdown 文件"));
+  console.log(chalk.dim("    /export [caption]  导出讨论为 Markdown 文件（可附标题）"));
   console.log(chalk.dim("    /last       查看上一次讨论结论"));
   console.log(chalk.dim("    /inject     注入当前目录 claude 会话"));
   console.log(chalk.dim("    /clear      清空上下文"));
@@ -266,14 +266,17 @@ async function handleLine(input) {
     return;
   }
 
-  if (input === "/export") {
+  if (input === "/export" || input.startsWith("/export ")) {
     if (ctx.messages.length === 0) { console.log(chalk.yellow("上下文为空，无可导出内容")); return; }
+    const caption = input.slice(8).trim().replace(/[\/\\:*?"<>|]/g, "");
     const dir = join(homedir(), ".agentalk", "exports");
     mkdirSync(dir, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filepath = join(dir, `agentalk-${ts}.md`);
+    const slug = caption ? `-${caption}` : "";
+    const filepath = join(dir, `agentalk-${ts}${slug}.md`);
+    const title = caption || "AgentTalk Export";
     const lines = [
-      `# AgentTalk Export`,
+      `# ${title}`,
       `> ${new Date().toLocaleString()}  ·  ${process.cwd()}\n`,
     ];
     for (const m of ctx.messages) {
