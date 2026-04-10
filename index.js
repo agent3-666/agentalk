@@ -6,7 +6,7 @@ import { homedir } from "os";
 import chalk from "chalk";
 import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
-import { discuss, debate, broadcast, requestStop, stopSignal, pushUserInput, saveSummary } from "./lib/discuss.js";
+import { discuss, debate, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, getGlobalTimeout, setGlobalTimeout, setAgentTimeout, CONFIG_PATH } from "./lib/config.js";
 import { createRepl } from "./lib/input.js";
@@ -76,10 +76,11 @@ function printBanner() {
   console.log(chalk.dim(`    ${t("banner.msg_hint")}`));
   console.log(chalk.dim(`    ${t("banner.mention_hint", { keys })}`));
   console.log(chalk.dim(`    ${t("banner.interject_hint")}`));
-  console.log(chalk.dim(`  ${t("banner.more_modes")}`));
+  console.log(chalk.dim(`  ${t("banner.code_modes")}`));
   console.log(chalk.dim(`    ${t("banner.debate_hint")}`));
   console.log(chalk.dim(`    ${t("banner.discuss_hint")}`));
   console.log(chalk.dim(`    ${t("banner.broadcast_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.mod_hint")}`));
   console.log(chalk.dim(`  ${t("banner.stop_header")}`));
   console.log(chalk.dim(`    ${t("banner.stop_s")}`));
   console.log(chalk.dim(`    ${t("banner.stop_ctrl")}`));
@@ -338,6 +339,7 @@ async function handleLine(input) {
       ["/debate  <topic>",   t("cmd.debate")],
       ["/discuss <topic>",   t("cmd.discuss")],
       ["/broadcast <msg>",   t("cmd.broadcast")],
+      ["/mod <topic>",       t("cmd.mod")],
       ["/context",           t("cmd.context")],
       ["/export",            t("cmd.export")],
       ["/last",              t("cmd.last")],
@@ -373,6 +375,14 @@ async function handleLine(input) {
     } else {
       console.log(chalk.red(`Unknown language: ${lang} — use en or zh`));
     }
+    return;
+  }
+
+  if (input.startsWith("/mod ")) {
+    const topic = input.slice(5).trim();
+    if (!topic) { console.log(chalk.red(t("err.mod_usage"))); return; }
+    await moderatedSession(topic, ctx);
+    logSummary(ctx, topic, Object.keys(AGENTS));
     return;
   }
 
@@ -492,12 +502,17 @@ async function handleLine(input) {
     return;
   }
 
-  // Default: serial debate (each agent speaks once, building on previous)
+  // Default: moderator-led session (no slash, no @mention = full moderator mode)
+  // @mention = direct targeted message, skip moderator planning
   const { targets, prompt } = parseMentions(input);
   if (!prompt) { console.log(chalk.red(t("err.empty_prompt"))); return; }
-  const sendTo = targets.length > 0 ? targets : Object.keys(AGENTS);
-  await debate(prompt, ctx, { maxTurns: sendTo.length, agents: sendTo, noJudge: true });
-  logSummary(ctx, prompt, sendTo);
+  if (targets.length > 0) {
+    await debate(prompt, ctx, { maxTurns: targets.length, agents: targets, noJudge: true });
+    logSummary(ctx, prompt, targets);
+  } else {
+    await moderatedSession(prompt, ctx);
+    logSummary(ctx, prompt, Object.keys(AGENTS));
+  }
 }
 
 // ─── Single-shot mode ────────────────────────────────────────────────
