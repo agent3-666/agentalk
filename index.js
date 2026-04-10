@@ -7,7 +7,6 @@ import chalk from "chalk";
 import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary } from "./lib/discuss.js";
-import { readClaudeSession } from "./lib/session.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, getGlobalTimeout, setGlobalTimeout, setAgentTimeout, CONFIG_PATH } from "./lib/config.js";
 import { createRepl } from "./lib/input.js";
 import { loadLang, setLang, getLang, t } from "./lib/i18n.js";
@@ -21,6 +20,24 @@ const flagContinue = argv.includes("-c") || argv.includes("--continue");
 const flagFromClaude = argv.includes("--from-claude");
 const flagHelp = argv.includes("-h") || argv.includes("--help");
 const inlineMsg = argv.filter((a) => !a.startsWith("-")).join(" ").trim();
+
+// ─── Briefing state ─────────────────────────────────────────────────
+// When --from-claude is set, the named agent becomes the "context source"
+// for this session. On the first substantive message the user types, we
+// call that agent once (silent-ish, with a labeled stream) to produce a
+// structured briefing, inject it as a system message in ctx, then hand
+// off to the moderator. Subsequent messages reuse the same ctx — no
+// re-briefing.
+let contextSourceKey = null;
+let briefingDone = false;
+if (flagFromClaude) {
+  if (AGENTS.claude) {
+    contextSourceKey = "claude";
+  } else {
+    console.log(chalk.yellow(t("briefing.source_not_active", { key: "claude" })));
+    console.log(chalk.dim(t("briefing.source_hint")));
+  }
+}
 
 // ─── Init context ───────────────────────────────────────────────────
 const ctx = new ContextManager(process.cwd());
@@ -54,21 +71,19 @@ if (flagContinue) {
   }
 }
 
-if (flagFromClaude) {
-  const msgs = readClaudeSession(process.cwd(), 20);
-  if (msgs && msgs.length > 0) {
-    const summary = msgs
-      .map((m) => `[${m.role === "user" ? "User" : "Claude"}] ${m.content.slice(0, 300)}`)
-      .join("\n\n");
-    ctx.add("system", t("inject.system_label", { summary }));
-    console.log(chalk.dim(t("session.claude_injected", { count: msgs.length })));
-  } else {
-    console.log(chalk.dim(t("session.claude_none")));
-  }
+// ─── Banner ─────────────────────────────────────────────────────────
+// Compact startup banner: 6 lines. Enough to start using the tool.
+// Full help lives in printFullHelp() (triggered by /help or -h).
+function printBanner() {
+  const activeNames = Object.values(AGENTS).map(a => a.displayName).join(" · ");
+  console.log(chalk.bold(`\n ${t("banner.title", { agents: activeNames })}\n`));
+  console.log(chalk.dim(`  ${t("banner.quick_msg")}`));
+  console.log(chalk.dim(`  ${t("banner.quick_cmds")}`));
+  console.log(chalk.dim(`  ${t("banner.quick_stop")}`));
+  console.log(chalk.dim(`  ${t("banner.quick_help")}\n`));
 }
 
-// ─── Banner ─────────────────────────────────────────────────────────
-function printBanner() {
+function printFullHelp() {
   const activeNames = Object.values(AGENTS).map(a => a.displayName).join(" · ");
   const keys = Object.keys(AGENTS).map(k => `@${k}`).join(" / ");
   console.log(chalk.bold(`\n ${t("banner.title", { agents: activeNames })}\n`));
@@ -88,7 +103,6 @@ function printBanner() {
   console.log(chalk.dim(`    ${t("banner.context_hint")}`));
   console.log(chalk.dim(`    ${t("banner.export_hint")}`));
   console.log(chalk.dim(`    ${t("banner.last_hint")}`));
-  console.log(chalk.dim(`    ${t("banner.inject_hint")}`));
   console.log(chalk.dim(`    ${t("banner.clear_hint")}`));
   console.log(chalk.dim(`    ${t("banner.save_load_hint")}`));
   console.log(chalk.dim(`  ${t("banner.agents_header")}`));
@@ -110,7 +124,7 @@ function printBanner() {
   console.log(chalk.dim(`    ${t("banner.quit_hint")}`));
 }
 
-if (flagHelp) { printBanner(); process.exit(0); }
+if (flagHelp) { printFullHelp(); process.exit(0); }
 
 // ─── Parse @mentions ─────────────────────────────────────────────────
 function parseMentions(input) {
@@ -312,9 +326,11 @@ function wizard(fields) {
 
 // ─── Save summary and show path ─────────────────────────────────────
 function logSummary(ctx, topic, agentKeys) {
-  const { global: gPath, local: lPath } = saveSummary(ctx, topic, agentKeys, { localDir: process.cwd() });
+  const { global: gPath, local: lPath, localJson: jPath } =
+    saveSummary(ctx, topic, agentKeys, { localDir: process.cwd() });
   if (gPath) console.log(chalk.dim(t("summary.saved", { path: gPath })));
   if (lPath) console.log(chalk.dim(t("summary.saved_local", { path: lPath })));
+  if (jPath) console.log(chalk.dim(t("summary.saved_raw", { path: jPath })));
 }
 
 // ─── Handle one input line ───────────────────────────────────────────
@@ -343,7 +359,6 @@ async function handleLine(input) {
       ["/context",           t("cmd.context")],
       ["/export",            t("cmd.export")],
       ["/last",              t("cmd.last")],
-      ["/inject",            t("cmd.inject")],
       ["/clear",             t("cmd.clear")],
       ["/save / /load",      `${t("cmd.save")} / ${t("cmd.load")}`],
       ["/agents",            t("cmd.agents")],
@@ -455,7 +470,12 @@ async function handleLine(input) {
     return;
   }
 
-  if (input === "/clear") { ctx.clear(); console.log(chalk.dim(t("context.cleared"))); return; }
+  if (input === "/clear") {
+    ctx.clear();
+    briefingDone = false; // fresh ctx → let briefing run again on next question
+    console.log(chalk.dim(t("context.cleared")));
+    return;
+  }
   if (input === "/save")  { ctx.save(); console.log(chalk.dim(t("context.saved", { path: ctx.path }))); return; }
   if (input === "/load")  {
     const ok = ctx.load();
@@ -464,21 +484,7 @@ async function handleLine(input) {
     return;
   }
 
-  if (input === "/inject") {
-    const msgs = readClaudeSession(process.cwd(), 20);
-    if (msgs?.length > 0) {
-      const summary = msgs
-        .map((m) => `[${m.role === "user" ? "User" : "Claude"}] ${m.content.slice(0, 300)}`)
-        .join("\n\n");
-      ctx.add("system", t("inject.system_label", { summary }));
-      console.log(chalk.dim(t("inject.done", { count: msgs.length })));
-    } else {
-      console.log(chalk.yellow(t("inject.none")));
-    }
-    return;
-  }
-
-  if (input === "/help")  { printBanner(); return; }
+  if (input === "/help")  { printFullHelp(); return; }
   if (input === "/quit" || input === "/q" || input === "/exit") {
     console.log(chalk.dim(t("input.bye"))); process.exit(0);
   }
@@ -529,7 +535,6 @@ const REPL_COMMANDS = [
   ["/context",   t("cmd.context")],
   ["/export",    t("cmd.export")],
   ["/last",      t("cmd.last")],
-  ["/inject",    t("cmd.inject")],
   ["/clear",     t("cmd.clear")],
   ["/save",      t("cmd.save")],
   ["/load",      t("cmd.load")],
@@ -545,6 +550,67 @@ printBanner();
 
 let pending = 0;
 
+// Commands that produce substantial output and deserve a visual separator
+// after they finish. Short info commands (/help, /context, /clear, etc.)
+// are noisy enough already and don't need one.
+function isSubstantiveCommand(line) {
+  const l = line.trim();
+  if (!l) return false;
+  // Plain text, @mention, or explicit discussion commands
+  if (!l.startsWith("/")) return true;
+  return /^\/(debate|discuss|broadcast|bc|mod)\b/.test(l);
+}
+
+// Strip a leading /debate, /discuss etc. and any @mentions so the briefer
+// gets the actual question the user wants discussed, not the command prefix.
+function extractQuestion(line) {
+  return line
+    .replace(/^\/(debate|discuss|broadcast|bc|mod)\b/i, "")
+    .replace(/@\w+/g, "")
+    .trim() || line;
+}
+
+// Run the briefing phase: call contextSourceKey agent with a structured
+// prompt asking for a [PROBLEM]/[CONTEXT]/[GOAL] briefing. Display the
+// stream with a "[Briefing]" label so the user can see what context is
+// being handed to the moderator. Returns true on success, false on
+// failure (user aborts the discussion in that case, per project principle:
+// if the context-source can't prepare the meeting materials, the meeting
+// is pointless).
+async function runBriefing(userLine) {
+  const briefer = AGENTS[contextSourceKey];
+  if (!briefer) return false;
+
+  const question = extractQuestion(userLine);
+  const briefingPrompt = t("prompt.briefing", { name: briefer.name, question });
+
+  // Decorate the label so the streamed output is clearly "[Briefing]"
+  // rather than looking like a normal discussion reply.
+  const origLabel = briefer.label;
+  briefer.label = `${origLabel}${chalk.dim(" [Briefing]")}`;
+  let result;
+  try {
+    console.log(chalk.dim(`\n${t("briefing.preparing", { name: briefer.displayName })}`));
+    result = await runAgent(contextSourceKey, briefingPrompt);
+  } finally {
+    briefer.label = origLabel;
+  }
+
+  if (result.stopped) {
+    console.log(chalk.yellow(t("briefing.cancelled")));
+    return false;
+  }
+  if (result.timedOut || !result.response?.trim()) {
+    console.log(chalk.red(t("briefing.failed")));
+    return false;
+  }
+
+  ctx.add("system", `[调用方简报 · briefing from ${briefer.displayName}]\n${result.response.trim()}`);
+  briefingDone = true;
+  console.log(chalk.dim(t("briefing.ready")));
+  return true;
+}
+
 const repl = createRepl({
   prompt: t("input.prompt"),
   commands: REPL_COMMANDS,
@@ -553,13 +619,37 @@ const repl = createRepl({
     if (!line) return;
     pending++;
     if (pending === 1) repl.pause();   // only set up scroll region on first entry
+    const substantive = isSubstantiveCommand(line);
     try {
+      // Briefing handoff: if a --from-<agent> context source was set and
+      // this is the first substantive question, have that agent write a
+      // structured briefing before handing the topic to the moderator.
+      // If briefing fails → abort this turn (the meeting is pointless
+      // without its context prep).
+      if (substantive && contextSourceKey && !briefingDone) {
+        const ok = await runBriefing(line);
+        if (!ok) {
+          pending--;
+          if (pending === 0) {
+            console.log("\n" + chalk.dim("─".repeat(60)) + "\n");
+            repl.showPrompt();
+          }
+          return;
+        }
+      }
       await handleLine(line);
     } catch (err) {
       console.log(chalk.red(`Error: ${err.message}`));
     }
     pending--;
-    if (pending === 0) repl.showPrompt();  // only tear down when fully done
+    if (pending === 0) {
+      // Divider + blank line between discussion tasks, so you can quickly
+      // scroll back and find the start/end of each conversation.
+      if (substantive) {
+        console.log("\n" + chalk.dim("─".repeat(60)) + "\n");
+      }
+      repl.showPrompt();
+    }
   },
   onSigint: () => {
     // Only called during active discussion (paused state in input.js)
