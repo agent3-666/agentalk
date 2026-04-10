@@ -260,8 +260,9 @@ function wizard(fields) {
 
 // ─── Save summary and show path ─────────────────────────────────────
 function logSummary(ctx, topic, agentKeys) {
-  const filepath = saveSummary(ctx, topic, agentKeys);
-  if (filepath) console.log(chalk.dim(t("summary.saved", { path: filepath })));
+  const { global: gPath, local: lPath } = saveSummary(ctx, topic, agentKeys, { localDir: process.cwd() });
+  if (gPath) console.log(chalk.dim(t("summary.saved", { path: gPath })));
+  if (lPath) console.log(chalk.dim(t("summary.saved_local", { path: lPath })));
 }
 
 // ─── Handle one input line ───────────────────────────────────────────
