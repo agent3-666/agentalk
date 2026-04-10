@@ -10,6 +10,10 @@ import { discuss, debate, broadcast, requestStop, stopSignal, pushUserInput, sav
 import { readClaudeSession } from "./lib/session.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, CONFIG_PATH } from "./lib/config.js";
 import { createRepl } from "./lib/input.js";
+import { loadLang, setLang, getLang, t } from "./lib/i18n.js";
+
+// ─── Load language setting ───────────────────────────────────────────
+loadLang();
 
 // ─── Parse CLI args ─────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -25,8 +29,7 @@ if (flagContinue) {
   const loaded = ctx.load();
   if (loaded) {
     const s = ctx.stats();
-    console.log(chalk.dim(`\n[续接会话] ${s.messages} 条消息，约 ${s.tokens.toLocaleString()} tokens\n`));
-    // Replay conversation history so user can see what was discussed
+    console.log(chalk.dim(`\n${t("session.loaded", { msgs: s.messages, tokens: s.tokens.toLocaleString() })}\n`));
     for (const m of ctx.messages) {
       if (m.role === "user") {
         console.log(`${chalk.bold.white("👤 You:")} ${chalk.white(m.content.length > 200 ? m.content.slice(0, 200) + "..." : m.content)}`);
@@ -41,13 +44,13 @@ if (flagContinue) {
         for (const line of preview.split("\n")) {
           if (line.trim()) console.log(`${color("│")} ${chalk.white(line)}`);
         }
-        console.log(`${color("╰")} ${chalk.dim("(历史)")}`);
+        console.log(`${color("╰")} ${chalk.dim(t("history.label"))}`);
       }
     }
     console.log(chalk.dim(`\n${"─".repeat(60)}`));
-    console.log(chalk.dim("以上为历史记录，继续对话即可\n"));
+    console.log(chalk.dim(t("session.history_note")));
   } else {
-    console.log(chalk.dim("[续接会话] 未找到历史，开始新会话"));
+    console.log(chalk.dim(t("session.not_found")));
   }
 }
 
@@ -57,49 +60,50 @@ if (flagFromClaude) {
     const summary = msgs
       .map((m) => `[${m.role === "user" ? "User" : "Claude"}] ${m.content.slice(0, 300)}`)
       .join("\n\n");
-    ctx.add("system", `[来自 Claude Code 的工程上下文]\n${summary}`);
-    console.log(chalk.dim(`[Claude Session] 注入 ${msgs.length} 条历史消息`));
+    ctx.add("system", t("inject.system_label", { summary }));
+    console.log(chalk.dim(t("session.claude_injected", { count: msgs.length })));
   } else {
-    console.log(chalk.dim("[Claude Session] 未找到当前目录的 claude 会话"));
+    console.log(chalk.dim(t("session.claude_none")));
   }
 }
 
 // ─── Banner ─────────────────────────────────────────────────────────
 function printBanner() {
   const activeNames = Object.values(AGENTS).map(a => a.displayName).join(" · ");
-  console.log(chalk.bold(`\n 🤖  AgentTalking  v2.0  ·  ${activeNames}\n`));
   const keys = Object.keys(AGENTS).map(k => `@${k}`).join(" / ");
-  console.log(chalk.dim("  默认模式（串行讨论）:"));
-  console.log(chalk.dim("    <msg>                每个 agent 依次发言，后者基于前者"));
-  console.log(chalk.dim(`    ${keys}  定向发送`));
-  console.log(chalk.dim("    讨论中直接输入      插入你的观点，下位 agent 可见"));
-  console.log(chalk.dim("  更多模式:"));
-  console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic>   多轮串行辩论"));
-  console.log(chalk.dim("    /discuss [@a @b] [--rounds N] <topic>   并行讨论"));
-  console.log(chalk.dim("    /broadcast <msg>     并行广播（不讨论）"));
-  console.log(chalk.dim("  停止讨论:"));
-  console.log(chalk.dim("    s + 回车    优雅停止（生成摘要）"));
-  console.log(chalk.dim("    Ctrl+C      立即停止"));
-  console.log(chalk.dim("  上下文与导出:"));
-  console.log(chalk.dim("    /context    查看上下文统计"));
-  console.log(chalk.dim("    /export [caption]  导出讨论为 Markdown 文件（可附标题）"));
-  console.log(chalk.dim("    /last       查看上一次讨论结论"));
-  console.log(chalk.dim("    /inject     注入当前目录 claude 会话"));
-  console.log(chalk.dim("    /clear      清空上下文"));
-  console.log(chalk.dim("    /save /load 手动存档/读档"));
-  console.log(chalk.dim("  Agent 管理:"));
-  console.log(chalk.dim("    /agents                  列出所有 agents 及状态"));
-  console.log(chalk.dim("    /agents enable <key>     启用 agent"));
-  console.log(chalk.dim("    /agents disable <key>    禁用 agent"));
-  console.log(chalk.dim("    /agents model <key> <m>  设置 agent 使用的模型"));
-  console.log(chalk.dim("    /agents model <key>      重置为默认模型"));
-  console.log(chalk.dim("    /agents add              交互式添加自定义 agent"));
-  console.log(chalk.dim("    /agents remove <key>     删除 agent"));
-  console.log(chalk.dim(`    config: ${CONFIG_PATH}`));
-  console.log(chalk.dim("  启动参数:"));
-  console.log(chalk.dim("    -c / --continue   续接上次会话"));
-  console.log(chalk.dim("    --from-claude     启动时注入 claude 会话"));
-  console.log(chalk.dim("    /quit             退出\n"));
+  console.log(chalk.bold(`\n ${t("banner.title", { agents: activeNames })}\n`));
+  console.log(chalk.dim(`  ${t("banner.default_mode")}`));
+  console.log(chalk.dim(`    ${t("banner.msg_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.mention_hint", { keys })}`));
+  console.log(chalk.dim(`    ${t("banner.interject_hint")}`));
+  console.log(chalk.dim(`  ${t("banner.more_modes")}`));
+  console.log(chalk.dim(`    ${t("banner.debate_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.discuss_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.broadcast_hint")}`));
+  console.log(chalk.dim(`  ${t("banner.stop_header")}`));
+  console.log(chalk.dim(`    ${t("banner.stop_s")}`));
+  console.log(chalk.dim(`    ${t("banner.stop_ctrl")}`));
+  console.log(chalk.dim(`  ${t("banner.context_header")}`));
+  console.log(chalk.dim(`    ${t("banner.context_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.export_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.last_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.inject_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.clear_hint")}`));
+  console.log(chalk.dim(`    ${t("banner.save_load_hint")}`));
+  console.log(chalk.dim(`  ${t("banner.agents_header")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_list")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_enable")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_disable")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_model")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_model_r")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_add")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_remove")}`));
+  console.log(chalk.dim(`    ${t("banner.config_path", { path: CONFIG_PATH })}`));
+  console.log(chalk.dim(`    ${t("banner.lang_hint")}`));
+  console.log(chalk.dim(`  ${t("banner.startup_header")}`));
+  console.log(chalk.dim(`    ${t("banner.flag_c")}`));
+  console.log(chalk.dim(`    ${t("banner.flag_claude")}`));
+  console.log(chalk.dim(`    ${t("banner.quit_hint")}`));
 }
 
 if (flagHelp) { printBanner(); process.exit(0); }
@@ -120,16 +124,14 @@ function parseDiscussArgs(input, cmd) {
   let rest = input.slice(cmd.length).trim();
   let max = cmd === "/discuss" ? 8 : 12;
 
-  // Extract @mentions for agent selection
   const allKeys = Object.keys(AGENTS).join("|");
   const mentionRe = new RegExp(`@(${allKeys})\\b`, "gi");
   const mentioned = [];
   let m;
   while ((m = mentionRe.exec(rest)) !== null) mentioned.push(m[1].toLowerCase());
   rest = rest.replace(new RegExp(`@(${allKeys})\\b`, "gi"), "").trim();
-  const agents = mentioned.length > 0 ? [...new Set(mentioned)] : null; // null = all
+  const agents = mentioned.length > 0 ? [...new Set(mentioned)] : null;
 
-  // Extract --rounds / --turns
   const numMatch = rest.match(/^--(?:rounds|turns)\s+(\d+)\s+([\s\S]+)/);
   let topic = rest;
   if (numMatch) { max = parseInt(numMatch[1]); topic = numMatch[2].trim(); }
@@ -142,51 +144,50 @@ async function handleAgentsCommand(sub) {
   const parts = sub.split(/\s+/).filter(Boolean);
   const subcmd = parts[0];
 
-  // /agents — list all
   if (!subcmd) {
     const all = listAgents();
-    console.log(chalk.bold("\n  Agent 列表:\n"));
+    console.log(chalk.bold(t("agents.list_header")));
     for (const a of all) {
       const active = AGENTS[a.key];
       const status = !a.installed
-        ? chalk.red("未安装")
+        ? chalk.red(t("agents.not_installed"))
         : a.enabled
-        ? chalk.green("已启用")
-        : chalk.dim("已禁用");
-      const inUse = active ? chalk.cyan(" ◀ 运行中") : "";
-      const modelInfo = a.model ? chalk.yellow(` [model: ${a.model}]`) : "";
+        ? chalk.green(t("agents.enabled"))
+        : chalk.dim(t("agents.disabled"));
+      const inUse = active ? chalk.cyan(t("agents.active")) : "";
+      const modelInfo = a.model ? chalk.yellow(t("agents.model_tag", { model: a.model })) : "";
       console.log(`  ${chalk.bold(a.key.padEnd(12))} ${status}${inUse}${modelInfo}`);
       console.log(`    ${chalk.dim(`${a.cmd}  ${a.note || ""}`)}`);
     }
-    console.log(chalk.dim(`\n  配置文件: ${CONFIG_PATH}\n`));
+    console.log(chalk.dim(t("agents.config_path", { path: CONFIG_PATH })));
     return;
   }
 
   if (subcmd === "enable" && parts[1]) {
     const r = enableAgent(parts[1]);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
+    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
     return;
   }
 
   if (subcmd === "disable" && parts[1]) {
     const r = disableAgent(parts[1]);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
+    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
     return;
   }
 
   if (subcmd === "model" && parts[1]) {
-    const model = parts.slice(2).join(" ") || null; // empty = reset to default
+    const model = parts.slice(2).join(" ") || null;
     const r = setAgentModel(parts[1], model);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
+    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
     return;
   }
 
   if (subcmd === "reset") {
     resetConfig();
-    console.log(chalk.green("配置已重置为默认值，重启 agentalk 后生效"));
+    console.log(chalk.green(t("agents.reset_done")));
     return;
   }
 
@@ -197,15 +198,14 @@ async function handleAgentsCommand(sub) {
   }
 
   if (subcmd === "add") {
-    // Interactive wizard
     const answers = await wizard([
-      { key: "key",   prompt: "唯一 key（英文，如 mygpt）: " },
-      { key: "name",  prompt: "显示名称（如 GPT-4o）: " },
-      { key: "cmd",   prompt: "命令（如 mycli）: " },
-      { key: "args",  prompt: "参数，用 {prompt} 代表用户输入（如: -p {prompt}）: " },
-      { key: "color", prompt: "颜色 hex（如 #FF6B6B，留空用默认）: " },
-      { key: "output",prompt: "输出格式 text 或 ndjson（留空默认 text）: " },
-      { key: "note",  prompt: "备注说明（可选）: " },
+      { key: "key",    prompt: t("wizard.key") },
+      { key: "name",   prompt: t("wizard.name") },
+      { key: "cmd",    prompt: t("wizard.cmd") },
+      { key: "args",   prompt: t("wizard.args") },
+      { key: "color",  prompt: t("wizard.color") },
+      { key: "output", prompt: t("wizard.output") },
+      { key: "note",   prompt: t("wizard.note") },
     ]);
 
     const def = {
@@ -219,23 +219,22 @@ async function handleAgentsCommand(sub) {
     };
 
     if (!def.key || !def.name || !def.cmd) {
-      console.log(chalk.red("key / name / cmd 不能为空"));
+      console.log(chalk.red(t("agents.key_empty")));
       return;
     }
 
     const r = addAgent(def);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim("重启 agentalk 后生效"));
+    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
     return;
   }
 
-  console.log(chalk.red("用法: /agents [enable|disable|model|add|remove] [key] [value]"));
+  console.log(chalk.red(t("agents.usage")));
 }
 
 // Simple readline wizard for multi-field input
 function wizard(fields) {
   return new Promise((resolve) => {
-    // Temporarily exit raw mode for readline wizard
     if (process.stdin.isTTY && process.stdin.isRaw) process.stdin.setRawMode(false);
 
     const answers = {};
@@ -252,7 +251,6 @@ function wizard(fields) {
       if (i < fields.length) { ask(); }
       else {
         tmpRl.close();
-        // Re-enter raw mode
         if (process.stdin.isTTY) process.stdin.setRawMode(true);
         resolve(answers);
       }
@@ -263,7 +261,7 @@ function wizard(fields) {
 // ─── Save summary and show path ─────────────────────────────────────
 function logSummary(ctx, topic, agentKeys) {
   const filepath = saveSummary(ctx, topic, agentKeys);
-  if (filepath) console.log(chalk.dim(`\n📄 摘要已保存: ${filepath}`));
+  if (filepath) console.log(chalk.dim(t("summary.saved", { path: filepath })));
 }
 
 // ─── Handle one input line ───────────────────────────────────────────
@@ -274,10 +272,10 @@ async function handleLine(input) {
   if (pending > 1) {
     if (input.toLowerCase() === "s") {
       requestStop();
-      console.log(chalk.yellow("\n[停止信号已发送，等待当前步骤完成...]"));
+      console.log(chalk.yellow(t("discuss.stop_sent")));
     } else {
       pushUserInput(input);
-      console.log(chalk.dim("[已记录，下一位 agent 将看到你的输入]"));
+      console.log(chalk.dim(t("discuss.interjected")));
     }
     return;
   }
@@ -285,18 +283,19 @@ async function handleLine(input) {
   // "/" alone → show command hints
   if (input === "/") {
     const cmds = [
-      ["/debate  <topic>",   "多轮串行辩论"],
-      ["/discuss <topic>",   "并行讨论"],
-      ["/broadcast <msg>",   "并行广播（不讨论）"],
-      ["/context",           "查看上下文统计"],
-      ["/export",            "导出为 Markdown"],
-      ["/last",              "查看上次结论"],
-      ["/inject",            "注入 Claude 会话"],
-      ["/clear",             "清空上下文"],
-      ["/save / /load",      "存档 / 读档"],
-      ["/agents",            "管理 agents"],
-      ["/help",              "完整帮助"],
-      ["/quit",              "退出"],
+      ["/debate  <topic>",   t("cmd.debate")],
+      ["/discuss <topic>",   t("cmd.discuss")],
+      ["/broadcast <msg>",   t("cmd.broadcast")],
+      ["/context",           t("cmd.context")],
+      ["/export",            t("cmd.export")],
+      ["/last",              t("cmd.last")],
+      ["/inject",            t("cmd.inject")],
+      ["/clear",             t("cmd.clear")],
+      ["/save / /load",      `${t("cmd.save")} / ${t("cmd.load")}`],
+      ["/agents",            t("cmd.agents")],
+      ["/lang en|zh",        t("cmd.lang")],
+      ["/help",              t("cmd.help")],
+      ["/quit",              t("cmd.quit")],
     ];
     console.log("");
     for (const [cmd, desc] of cmds) {
@@ -306,9 +305,25 @@ async function handleLine(input) {
     return;
   }
 
+  // /lang — switch language
+  if (input.startsWith("/lang")) {
+    const lang = input.slice(5).trim();
+    if (!lang) {
+      console.log(chalk.dim(`Language: ${getLang()} (en / zh)`));
+      return;
+    }
+    const ok = setLang(lang);
+    if (ok) {
+      console.log(chalk.green(`Language set to: ${lang} (restart to apply fully)`));
+    } else {
+      console.log(chalk.red(`Unknown language: ${lang} — use en or zh`));
+    }
+    return;
+  }
+
   if (input.startsWith("/discuss")) {
     const { max, topic, agents } = parseDiscussArgs(input, "/discuss");
-    if (!topic) { console.log(chalk.red("用法: /discuss [@agent...] <话题>")); return; }
+    if (!topic) { console.log(chalk.red(t("err.discuss_usage"))); return; }
     const usedAgents = agents || Object.keys(AGENTS);
     await discuss(topic, ctx, { maxRounds: max, ...(agents && { agents }) });
     logSummary(ctx, topic, usedAgents);
@@ -317,7 +332,7 @@ async function handleLine(input) {
 
   if (input.startsWith("/debate")) {
     const { max, topic, agents } = parseDiscussArgs(input, "/debate");
-    if (!topic) { console.log(chalk.red("用法: /debate [@agent...] <话题>")); return; }
+    if (!topic) { console.log(chalk.red(t("err.debate_usage"))); return; }
     const usedAgents = agents || Object.keys(AGENTS);
     await debate(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
     logSummary(ctx, topic, usedAgents);
@@ -326,7 +341,7 @@ async function handleLine(input) {
 
   if (input === "/context" || input === "/ctx") {
     const s = ctx.stats();
-    console.log(chalk.dim(`上下文: ${s.messages} 条消息 · ${s.chars.toLocaleString()} 字符 · ~${s.tokens.toLocaleString()} tokens`));
+    console.log(chalk.dim(t("context.stats", { msgs: s.messages, chars: s.chars.toLocaleString(), tokens: s.tokens.toLocaleString() })));
     return;
   }
 
@@ -336,8 +351,8 @@ async function handleLine(input) {
   }
 
   if (input === "/export" || input.startsWith("/export ")) {
-    if (ctx.messages.length === 0) { console.log(chalk.yellow("上下文为空，无可导出内容")); return; }
-    const caption = input.slice(8).trim().replace(/[\/\\:*?"<>|]/g, "");
+    if (ctx.messages.length === 0) { console.log(chalk.yellow(t("context.empty"))); return; }
+    const caption = input.slice(8).trim().replace(/[/\\:*?"<>|]/g, "");
     const dir = join(homedir(), ".agentalk", "exports");
     mkdirSync(dir, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -355,30 +370,32 @@ async function handleLine(input) {
       lines.push(`### ${speaker}\n${m.content}\n`);
     }
     writeFileSync(filepath, lines.join("\n"));
-    console.log(chalk.green(`已导出: ${filepath}`));
+    console.log(chalk.green(t("context.exported", { path: filepath })));
     return;
   }
 
   if (input === "/last") {
     const conclusions = ctx.messages.filter(
-      m => m.role === "system" && (m.content.includes("[讨论结论]") || m.content.includes("[辩论结论]"))
+      m => m.role === "system" && (
+        m.content.includes("[CONCLUSION]") || m.content.includes("[DEBATE_CONCLUSION]")
+      )
     );
     if (conclusions.length === 0) {
-      console.log(chalk.yellow("暂无讨论结论，先用 /discuss 或 /debate 进行一次讨论"));
+      console.log(chalk.yellow(t("context.no_conclusion")));
     } else {
       const last = conclusions[conclusions.length - 1];
-      console.log(chalk.bold("\n上一次讨论结论:"));
-      console.log(chalk.white(last.content.replace(/\[.*?结论\]\s*/, "")));
+      console.log(chalk.bold(t("context.last_header")));
+      console.log(chalk.white(last.content.replace(/\[(?:CONCLUSION|DEBATE_CONCLUSION)\]\s*/, "")));
     }
     return;
   }
 
-  if (input === "/clear") { ctx.clear(); console.log(chalk.dim("上下文已清空")); return; }
-  if (input === "/save")  { ctx.save(); console.log(chalk.dim(`已保存: ${ctx.path}`)); return; }
+  if (input === "/clear") { ctx.clear(); console.log(chalk.dim(t("context.cleared"))); return; }
+  if (input === "/save")  { ctx.save(); console.log(chalk.dim(t("context.saved", { path: ctx.path }))); return; }
   if (input === "/load")  {
     const ok = ctx.load();
     const s = ctx.stats();
-    console.log(ok ? chalk.dim(`已加载: ${s.messages} 条消息`) : chalk.red("未找到存档"));
+    console.log(ok ? chalk.dim(t("context.loaded", { msgs: s.messages })) : chalk.red(t("context.not_found")));
     return;
   }
 
@@ -388,30 +405,31 @@ async function handleLine(input) {
       const summary = msgs
         .map((m) => `[${m.role === "user" ? "User" : "Claude"}] ${m.content.slice(0, 300)}`)
         .join("\n\n");
-      ctx.add("system", `[来自 Claude Code 的工程上下文]\n${summary}`);
-      console.log(chalk.dim(`注入 ${msgs.length} 条 claude 会话消息`));
+      ctx.add("system", t("inject.system_label", { summary }));
+      console.log(chalk.dim(t("inject.done", { count: msgs.length })));
     } else {
-      console.log(chalk.yellow("未找到当前目录的 claude 会话"));
+      console.log(chalk.yellow(t("inject.none")));
     }
     return;
   }
 
   if (input === "/help")  { printBanner(); return; }
   if (input === "/quit" || input === "/q" || input === "/exit") {
-    console.log(chalk.dim("\nBye! 👋")); process.exit(0);
+    console.log(chalk.dim(t("input.bye"))); process.exit(0);
   }
 
   // Unknown slash command — catch before falling through to debate
   if (input.startsWith("/") && !input.startsWith("/broadcast") && !input.startsWith("/bc ")) {
-    console.log(chalk.red(`未知命令: ${input.split(" ")[0]}`));
-    console.log(chalk.dim("输入 /help 查看所有命令，或输入 / 快速浏览"));
+    const cmd = input.split(" ")[0];
+    console.log(chalk.red(t("err.unknown_cmd", { cmd })));
+    console.log(chalk.dim(t("err.unknown_cmd_hint")));
     return;
   }
 
   // /broadcast — explicit parallel mode
   if (input.startsWith("/broadcast ") || input.startsWith("/bc ")) {
     const msg = input.replace(/^\/(broadcast|bc)\s+/, "").trim();
-    if (!msg) { console.log(chalk.red("用法: /broadcast <消息>")); return; }
+    if (!msg) { console.log(chalk.red(t("err.broadcast_usage"))); return; }
     const { targets, prompt } = parseMentions(msg);
     const sendTo = targets.length > 0 ? targets : Object.keys(AGENTS);
     await broadcast(prompt || msg, ctx, sendTo);
@@ -421,7 +439,7 @@ async function handleLine(input) {
 
   // Default: serial debate (each agent speaks once, building on previous)
   const { targets, prompt } = parseMentions(input);
-  if (!prompt) { console.log(chalk.red("请输入消息内容")); return; }
+  if (!prompt) { console.log(chalk.red(t("err.empty_prompt"))); return; }
   const sendTo = targets.length > 0 ? targets : Object.keys(AGENTS);
   await debate(prompt, ctx, { maxTurns: sendTo.length, agents: sendTo, noJudge: true });
   logSummary(ctx, prompt, sendTo);
@@ -435,20 +453,21 @@ if (inlineMsg) {
 
 // ─── Command definitions for autocomplete ───────────────────────────
 const REPL_COMMANDS = [
-  ["/debate",    "多轮串行辩论"],
-  ["/discuss",   "并行讨论"],
-  ["/broadcast", "并行广播（不讨论）"],
-  ["/context",   "查看上下文统计"],
-  ["/export",    "导出为 Markdown"],
-  ["/last",      "查看上次结论"],
-  ["/inject",    "注入 Claude 会话"],
-  ["/clear",     "清空上下文"],
-  ["/save",      "保存会话"],
-  ["/load",      "加载会话"],
-  ["/agents",    "管理 agents"],
-  ["/help",      "完整帮助"],
-  ["/quit",      "退出"],
-  ...Object.keys(AGENTS).map(k => [`@${k}`, `发送给 ${AGENTS[k].name}`]),
+  ["/debate",    t("cmd.debate")],
+  ["/discuss",   t("cmd.discuss")],
+  ["/broadcast", t("cmd.broadcast")],
+  ["/context",   t("cmd.context")],
+  ["/export",    t("cmd.export")],
+  ["/last",      t("cmd.last")],
+  ["/inject",    t("cmd.inject")],
+  ["/clear",     t("cmd.clear")],
+  ["/save",      t("cmd.save")],
+  ["/load",      t("cmd.load")],
+  ["/agents",    t("cmd.agents")],
+  ["/lang",      t("cmd.lang")],
+  ["/help",      t("cmd.help")],
+  ["/quit",      t("cmd.quit")],
+  ...Object.keys(AGENTS).map(k => [`@${k}`, t("cmd.send_to", { name: AGENTS[k].name })]),
 ];
 
 // ─── Interactive REPL ────────────────────────────────────────────────
@@ -457,7 +476,7 @@ printBanner();
 let pending = 0;
 
 const repl = createRepl({
-  prompt: "You > ",
+  prompt: t("input.prompt"),
   commands: REPL_COMMANDS,
   agents: AGENTS,
   onLine: async (line) => {
@@ -474,7 +493,7 @@ const repl = createRepl({
   },
   onSigint: () => {
     // Only called during active discussion (paused state in input.js)
-    console.log(chalk.yellow("\n[Ctrl+C] 发送停止信号..."));
+    console.log(chalk.yellow(t("input.stop_signal")));
     requestStop();
   },
 });
