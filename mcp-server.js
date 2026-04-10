@@ -17,13 +17,21 @@ function parseAgents(str) {
   return list.length > 0 ? list : null;
 }
 
-// ─── Helper: get last conclusion from context ────────────────────────
+// ─── Helper: get last conclusion (or partial outcome) from context ──
+// Looks for any terminal marker set by discuss.js: CONCLUSION (converged),
+// DEBATE_CONCLUSION (debate converged), TIMEOUT (hit max rounds), or
+// ABORTED (user stopped). Returns { status, text } so the caller can tell
+// the difference between a real conclusion and a timed-out / aborted run.
 function getLastConclusion(ctx) {
-  const conclusions = ctx.messages.filter(
-    m => m.role === "system" && (m.content.includes("[讨论结论]") || m.content.includes("[辩论结论]"))
+  const markers = /^\[(CONCLUSION|DEBATE_CONCLUSION|TIMEOUT|ABORTED)\]\s*/;
+  const last = ctx.messages.findLast(
+    m => m.role === "system" && markers.test(m.content)
   );
-  if (conclusions.length === 0) return null;
-  return conclusions[conclusions.length - 1].content.replace(/\[.*?结论\]\s*/, "").trim();
+  if (!last) return null;
+  const match = last.content.match(markers);
+  const status = match[1];
+  const text = last.content.replace(markers, "").trim();
+  return { status, text };
 }
 
 // ─── Helper: build transcript from context messages ──────────────────
@@ -35,6 +43,26 @@ function buildTranscript(messages) {
       return `**${speaker}**: ${m.content}`;
     })
     .join("\n\n");
+}
+
+// Format a discussion/debate result so the calling agent gets both the
+// bottom-line answer AND the transcript, with a clear status header.
+function formatDiscussionResult(ctx, kind) {
+  const outcome = getLastConclusion(ctx);
+  const transcript = buildTranscript(ctx.messages);
+
+  let header;
+  if (!outcome) {
+    header = `## ${kind}未收敛（未产生结论）`;
+  } else if (outcome.status === "CONCLUSION" || outcome.status === "DEBATE_CONCLUSION") {
+    header = `## 结论\n${outcome.text}`;
+  } else if (outcome.status === "TIMEOUT") {
+    header = `## ${kind}达到最大轮次（以下是当前进度摘要）\n${outcome.text}`;
+  } else if (outcome.status === "ABORTED") {
+    header = `## ${kind}被用户中断（以下是当前进度摘要）\n${outcome.text}`;
+  }
+
+  return `${header}\n\n## ${kind}记录\n${transcript}`;
 }
 
 // ─── MCP Server ──────────────────────────────────────────────────────
@@ -132,21 +160,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { topic, agents: agentsStr, max_rounds = 4 } = args;
       const agents = parseAgents(agentsStr) || undefined;
 
-      const lines = await discuss(topic, ctx, {
+      await discuss(topic, ctx, {
         maxRounds: max_rounds,
         capture: true,
         ...(agents && { agents }),
       });
 
-      const conclusion = getLastConclusion(ctx);
-      const transcript = buildTranscript(ctx.messages);
-
-      const result = [
-        conclusion ? `## 结论\n${conclusion}` : "## 讨论未收敛",
-        `## 讨论记录\n${transcript}`,
-      ].join("\n\n");
-
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text", text: formatDiscussionResult(ctx, "讨论") }] };
     }
 
     if (name === "debate") {
@@ -159,15 +179,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ...(agents && { agents }),
       });
 
-      const conclusion = getLastConclusion(ctx);
-      const transcript = buildTranscript(ctx.messages);
-
-      const result = [
-        conclusion ? `## 结论\n${conclusion}` : "## 辩论未收敛",
-        `## 辩论记录\n${transcript}`,
-      ].join("\n\n");
-
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text", text: formatDiscussionResult(ctx, "辩论") }] };
     }
 
     return { content: [{ type: "text", text: `未知工具: ${name}` }], isError: true };
