@@ -8,7 +8,7 @@ import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, requestStop, stopSignal, pushUserInput, saveSummary } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
-import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, CONFIG_PATH } from "./lib/config.js";
+import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, CONFIG_PATH } from "./lib/config.js";
 import { createRepl } from "./lib/input.js";
 import { loadLang, setLang, getLang, t } from "./lib/i18n.js";
 
@@ -98,6 +98,8 @@ function printBanner() {
   console.log(chalk.dim(`    ${t("banner.agents_model_r")}`));
   console.log(chalk.dim(`    ${t("banner.agents_add")}`));
   console.log(chalk.dim(`    ${t("banner.agents_remove")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_moderator")}`));
+  console.log(chalk.dim(`    ${t("banner.agents_order")}`));
   console.log(chalk.dim(`    ${t("banner.config_path", { path: CONFIG_PATH })}`));
   console.log(chalk.dim(`    ${t("banner.lang_hint")}`));
   console.log(chalk.dim(`  ${t("banner.startup_header")}`));
@@ -146,6 +148,7 @@ async function handleAgentsCommand(sub) {
 
   if (!subcmd) {
     const all = listAgents();
+    const moderatorKey = getModeratorKey();
     console.log(chalk.bold(t("agents.list_header")));
     for (const a of all) {
       const active = AGENTS[a.key];
@@ -155,8 +158,10 @@ async function handleAgentsCommand(sub) {
         ? chalk.green(t("agents.enabled"))
         : chalk.dim(t("agents.disabled"));
       const inUse = active ? chalk.cyan(t("agents.active")) : "";
+      const isMod = a.key === moderatorKey;
+      const modMarker = isMod ? chalk.magenta(t("agents.moderator_marker")) : "";
       const modelInfo = a.model ? chalk.yellow(t("agents.model_tag", { model: a.model })) : "";
-      console.log(`  ${chalk.bold(a.key.padEnd(12))} ${status}${inUse}${modelInfo}`);
+      console.log(`  ${chalk.bold(a.key.padEnd(12))} ${status}${inUse}${modMarker}${modelInfo}`);
       console.log(`    ${chalk.dim(`${a.cmd}  ${a.note || ""}`)}`);
     }
     console.log(chalk.dim(t("agents.config_path", { path: CONFIG_PATH })));
@@ -180,6 +185,32 @@ async function handleAgentsCommand(sub) {
   if (subcmd === "model" && parts[1]) {
     const model = parts.slice(2).join(" ") || null;
     const r = setAgentModel(parts[1], model);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
+    return;
+  }
+
+  if (subcmd === "moderator") {
+    if (!parts[1]) {
+      const key = getModeratorKey();
+      const name = key ? (AGENTS[key]?.displayName || key) : t("agents.moderator_auto");
+      console.log(chalk.dim(t("agents.moderator_current", { name })));
+      return;
+    }
+    const r = setModerator(parts[1]);
+    console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
+    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
+    return;
+  }
+
+  if (subcmd === "order") {
+    if (parts.length < 2) {
+      const active = listAgents().filter(a => a.installed && a.enabled).map(a => a.key);
+      console.log(chalk.dim(`${t("agents.order_current")}: ${active.join(" → ")}`));
+      console.log(chalk.dim(t("agents.order_usage")));
+      return;
+    }
+    const r = reorderAgents(parts.slice(1));
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
     if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
     return;
@@ -294,6 +325,8 @@ async function handleLine(input) {
       ["/clear",             t("cmd.clear")],
       ["/save / /load",      `${t("cmd.save")} / ${t("cmd.load")}`],
       ["/agents",            t("cmd.agents")],
+      ["/agents moderator",  t("cmd.agents_moderator")],
+      ["/agents order",      t("cmd.agents_order")],
       ["/lang en|zh",        t("cmd.lang")],
       ["/help",              t("cmd.help")],
       ["/quit",              t("cmd.quit")],
