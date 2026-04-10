@@ -6,7 +6,7 @@ import { homedir } from "os";
 import chalk from "chalk";
 import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
-import { discuss, debate, broadcast, requestStop, stopSignal } from "./lib/discuss.js";
+import { discuss, debate, broadcast, requestStop, stopSignal, feedMessage } from "./lib/discuss.js";
 import { readClaudeSession } from "./lib/session.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, CONFIG_PATH } from "./lib/config.js";
 
@@ -56,6 +56,7 @@ function printBanner() {
   console.log(chalk.dim("    /debate  [@a @b] [--turns N]  <topic>   串行辩论（接力）"));
   console.log(chalk.dim("  停止讨论:"));
   console.log(chalk.dim("    s + 回车    优雅停止（生成摘要）"));
+  console.log(chalk.dim("    /add <msg>  讨论中追加补充信息"));
   console.log(chalk.dim("    Ctrl+C      立即停止"));
   console.log(chalk.dim("  上下文与导出:"));
   console.log(chalk.dim("    /context    查看上下文统计"));
@@ -243,6 +244,15 @@ async function handleLine(input) {
   if (input === "s" && pending > 0) {
     requestStop();
     console.log(chalk.yellow("\n[停止信号已发送，等待当前步骤完成...]"));
+    return;
+  }
+
+  // /add during discussion = feed supplemental info to agents
+  if (input.startsWith("/add ") && pending > 0) {
+    const msg = input.slice(5).trim();
+    if (!msg) { console.log(chalk.red("用法: /add <补充信息>")); return; }
+    feedMessage(msg);
+    console.log(chalk.green(`[已追加，下一轮可见: ${msg.slice(0, 60)}${msg.length > 60 ? "..." : ""}]`));
     return;
   }
 
