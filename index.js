@@ -8,6 +8,7 @@ import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
 import { discuss, debate, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary, feedMessage } from "./lib/discuss.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, getGlobalTimeout, setGlobalTimeout, setAgentTimeout, CONFIG_PATH } from "./lib/config.js";
+import { resolveModel, inferProvider, PROVIDER_COLORS, setApiKey, getApiKey, listApiKeys, setCustomEndpoint, getCustomEndpoint } from "./lib/model-runner.js";
 import { createRepl } from "./lib/input.js";
 import { loadLang, setLang, getLang, t } from "./lib/i18n.js";
 
@@ -298,6 +299,54 @@ async function handleAgentsCommand(sub) {
     return;
   }
 
+  // /agents add-model <model-id> [<model-id> ...]
+  // Registers one or more API models as agentalk-model-backed agents
+  if (subcmd === "add-model") {
+    if (parts.length < 2) {
+      console.log(chalk.red(t("agents.add_model_usage")));
+      return;
+    }
+    for (const modelId of parts.slice(1)) {
+      const { provider, model } = resolveModel(modelId);
+      const key = model.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+      const color = PROVIDER_COLORS[provider] || "#6B7280";
+      const r = addAgent({
+        key,
+        name: model,
+        cmd: "agentalk-model",
+        args: ["-m", modelId, "{prompt}"],
+        color,
+        output: "text",
+        note: `${provider}/${model} via API — set key with: /agents set-key ${provider} <key>`,
+      });
+      console.log(r.ok ? chalk.green(t("agents.add_model_added", { key, model: modelId })) : chalk.red(r.msg));
+    }
+    console.log(chalk.dim(t("agents.restart_required")));
+    return;
+  }
+
+  // /agents set-key <provider> <api-key>
+  if (subcmd === "set-key") {
+    if (parts.length === 1) {
+      const providers = listApiKeys();
+      if (providers.length === 0) console.log(chalk.dim(t("agents.set_key_none")));
+      else console.log(chalk.dim(t("agents.set_key_list", { providers: providers.join(", ") })));
+      return;
+    }
+    if (parts.length < 3) { console.log(chalk.red(t("agents.set_key_usage"))); return; }
+    setApiKey(parts[1], parts[2]);
+    console.log(chalk.green(t("agents.set_key_done", { provider: parts[1] })));
+    return;
+  }
+
+  // /agents set-endpoint <provider> <base-url>
+  if (subcmd === "set-endpoint") {
+    if (parts.length < 3) { console.log(chalk.red(t("agents.set_endpoint_usage"))); return; }
+    setCustomEndpoint(parts[1], parts[2]);
+    console.log(chalk.green(t("agents.set_endpoint_done", { provider: parts[1], endpoint: parts[2] })));
+    return;
+  }
+
   if (subcmd === "remove" && parts[1]) {
     const r = removeAgent(parts[1]);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
@@ -407,6 +456,8 @@ async function handleLine(input) {
       ["/agents moderator",  t("cmd.agents_moderator")],
       ["/agents order",      t("cmd.agents_order")],
       ["/agents timeout",    t("cmd.agents_timeout")],
+      ["/agents add-model",  t("cmd.agents_add_model")],
+      ["/agents set-key",    t("cmd.agents_set_key")],
       ["/lang en|zh",        t("cmd.lang")],
       ["/help",              t("cmd.help")],
       ["/quit",              t("cmd.quit")],
