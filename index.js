@@ -543,38 +543,6 @@ async function handleLine(input) {
     return;
   }
 
-  if (input.startsWith("/panel")) {
-    const { max, topic, agents } = parseDiscussArgs(input, "/panel");
-    if (!topic) { console.log(chalk.red("用法: /panel [@agent...] [--rounds N] <话题>")); return; }
-    await panel(topic, ctx, { maxRounds: max || 3, ...(agents && { agents }) });
-    logSummary(ctx, topic, agents || Object.keys(AGENTS));
-    return;
-  }
-
-  if (input.startsWith("/brainstorm")) {
-    const { max, topic, agents } = parseDiscussArgs(input, "/brainstorm");
-    if (!topic) { console.log(chalk.red("用法: /brainstorm [@agent...] [--rounds N] <话题>")); return; }
-    await brainstorm(topic, ctx, { maxRounds: max, ...(agents && { agents }) });
-    logSummary(ctx, topic, agents || Object.keys(AGENTS));
-    return;
-  }
-
-  if (input.startsWith("/challenge")) {
-    const { max, topic, agents } = parseDiscussArgs(input, "/challenge");
-    if (!topic) { console.log(chalk.red("用法: /challenge [@agent...] [--turns N] <话题>")); return; }
-    await challenge(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
-    logSummary(ctx, topic, agents || Object.keys(AGENTS));
-    return;
-  }
-
-  if (input.startsWith("/deepen")) {
-    const { max, topic, agents } = parseDiscussArgs(input, "/deepen");
-    if (!topic) { console.log(chalk.red("用法: /deepen [@agent...] [--turns N] <话题>")); return; }
-    await deepen(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
-    logSummary(ctx, topic, agents || Object.keys(AGENTS));
-    return;
-  }
-
   if (input === "/context" || input === "/ctx") {
     const s = ctx.stats();
     console.log(chalk.dim(t("context.stats", { msgs: s.messages, chars: s.chars.toLocaleString(), tokens: s.tokens.toLocaleString() })));
