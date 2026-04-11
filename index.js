@@ -23,19 +23,11 @@ const flagHelp = argv.includes("-h") || argv.includes("--help");
 const flagInstallSkill = argv.includes("--install-skill");
 const flagVerbose = argv.includes("--verbose") || argv.includes("-v");
 
-// Non-interactive headless mode: --discuss / --debate / --panel / --brainstorm / --challenge / --deepen
-const flagDiscussIdx    = argv.findIndex(a => a === "--discuss");
-const flagDebateIdx     = argv.findIndex(a => a === "--debate");
-const flagPanelIdx      = argv.findIndex(a => a === "--panel");
-const flagBrainstormIdx = argv.findIndex(a => a === "--brainstorm");
-const flagChallengeIdx  = argv.findIndex(a => a === "--challenge");
-const flagDeepenIdx     = argv.findIndex(a => a === "--deepen");
-const headlessTopic  = flagDiscussIdx    !== -1 ? argv[flagDiscussIdx    + 1]
-                     : flagDebateIdx     !== -1 ? argv[flagDebateIdx     + 1]
-                     : flagPanelIdx      !== -1 ? argv[flagPanelIdx      + 1]
-                     : flagBrainstormIdx !== -1 ? argv[flagBrainstormIdx + 1]
-                     : flagChallengeIdx  !== -1 ? argv[flagChallengeIdx  + 1]
-                     : flagDeepenIdx     !== -1 ? argv[flagDeepenIdx     + 1]
+// Non-interactive headless mode: --discuss "topic" / --debate "topic"
+const flagDiscussIdx = argv.findIndex(a => a === "--discuss");
+const flagDebateIdx  = argv.findIndex(a => a === "--debate");
+const headlessTopic  = flagDiscussIdx !== -1 ? argv[flagDiscussIdx + 1]
+                     : flagDebateIdx  !== -1 ? argv[flagDebateIdx  + 1]
                      : null;
 const headlessMode   = flagDiscussIdx    !== -1 ? "discuss"
                      : flagDebateIdx     !== -1 ? "debate"
@@ -161,12 +153,11 @@ if (headlessMode && headlessTopic) {
   // --verbose: stream each agent's output to stdout in real-time (capture=false)
   // default: capture silently, print only the final conclusion (clean for piping)
   let lines;
-  if      (headlessMode === "discuss")    lines = await discuss   (headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "panel")      lines = await panel     (headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "brainstorm") lines = await brainstorm(headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "challenge")  lines = await challenge (headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "deepen")     lines = await deepen    (headlessTopic, ctx, { capture: !flagVerbose });
-  else                                    lines = await debate    (headlessTopic, ctx, { capture: !flagVerbose });
+  if (headlessMode === "discuss") {
+    lines = await discuss(headlessTopic, ctx, { capture: !flagVerbose });
+  } else {
+    lines = await debate(headlessTopic, ctx, { capture: !flagVerbose });
+  }
   if (!flagVerbose) {
     // Print captured output then extract conclusion for clean stdout
     const conclusion = ctx.messages.findLast(
