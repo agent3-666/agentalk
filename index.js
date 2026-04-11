@@ -21,6 +21,7 @@ const flagContinue = argv.includes("-c") || argv.includes("--continue");
 const flagFromClaude = argv.includes("--from-claude");
 const flagHelp = argv.includes("-h") || argv.includes("--help");
 const flagInstallSkill = argv.includes("--install-skill");
+const flagVerbose = argv.includes("--verbose") || argv.includes("-v");
 
 // Non-interactive headless mode: --discuss "topic" / --debate "topic"
 const flagDiscussIdx = argv.findIndex(a => a === "--discuss");
@@ -145,20 +146,24 @@ if (flagInstallSkill) {
 // ─── Headless mode: --discuss / --debate ────────────────────────────
 if (headlessMode && headlessTopic) {
   const ctx = new ContextManager(process.cwd());
+  // --verbose: stream each agent's output to stdout in real-time (capture=false)
+  // default: capture silently, print only the final conclusion (clean for piping)
   let lines;
   if (headlessMode === "discuss") {
-    lines = await discuss(headlessTopic, ctx, { capture: true });
+    lines = await discuss(headlessTopic, ctx, { capture: !flagVerbose });
   } else {
-    lines = await debate(headlessTopic, ctx, { capture: true });
+    lines = await debate(headlessTopic, ctx, { capture: !flagVerbose });
   }
-  // Print captured output then extract conclusion for clean stdout
-  const conclusion = ctx.messages.findLast(
-    m => m.role === "system" && /^\[(辩论结论|讨论结论|CONCLUSION|DEBATE_CONCLUSION)\]/.test(m.content)
-  );
-  if (conclusion) {
-    process.stdout.write(conclusion.content + "\n");
-  } else if (lines?.length) {
-    process.stdout.write(lines.join("\n") + "\n");
+  if (!flagVerbose) {
+    // Print captured output then extract conclusion for clean stdout
+    const conclusion = ctx.messages.findLast(
+      m => m.role === "system" && /^\[(辩论结论|讨论结论|CONCLUSION|DEBATE_CONCLUSION)\]/.test(m.content)
+    );
+    if (conclusion) {
+      process.stdout.write(conclusion.content + "\n");
+    } else if (lines?.length) {
+      process.stdout.write(lines.join("\n") + "\n");
+    }
   }
   process.exit(0);
 }
