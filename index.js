@@ -458,7 +458,7 @@ async function handleLine(input) {
     const { max, topic, agents } = parseDiscussArgs(input, "/discuss");
     if (!topic) { console.log(chalk.red("用法: /discuss [@agent...] [--rounds N] <话题|文件路径>")); return; }
     await discuss(topic, ctx, { maxRounds: max, ...(agents && { agents }) });
-    logSummary(ctx, topic, usedAgents);
+    logSummary(ctx, topic, agents || Object.keys(AGENTS));
     return;
   }
 
@@ -466,7 +466,7 @@ async function handleLine(input) {
     const { max, topic, agents } = parseDiscussArgs(input, "/debate");
     if (!topic) { console.log(chalk.red("用法: /debate [@agent...] [--turns N] <话题|文件路径>")); return; }
     await debate(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
-    logSummary(ctx, topic, usedAgents);
+    logSummary(ctx, topic, agents || Object.keys(AGENTS));
     return;
   }
 
@@ -604,6 +604,8 @@ async function handleLine(input) {
   }
 }
 
+let pending = 0;
+
 // ─── Single-shot mode ────────────────────────────────────────────────
 if (inlineMsg) {
   await handleLine(inlineMsg);
@@ -631,8 +633,6 @@ const REPL_COMMANDS = [
 
 // ─── Interactive REPL ────────────────────────────────────────────────
 printBanner();
-
-let pending = 0;
 
 // Commands that produce substantial output and deserve a visual separator
 // after they finish. Short info commands (/help, /context, /clear, etc.)
