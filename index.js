@@ -6,7 +6,7 @@ import { homedir } from "os";
 import chalk from "chalk";
 import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
-import { discuss, debate, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary, feedMessage } from "./lib/discuss.js";
+import { discuss, debate, panel, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary, feedMessage } from "./lib/discuss.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, getGlobalTimeout, setGlobalTimeout, setAgentTimeout, CONFIG_PATH } from "./lib/config.js";
 import { resolveModel, inferProvider, PROVIDER_COLORS, setApiKey, getApiKey, listApiKeys, setCustomEndpoint, getCustomEndpoint } from "./lib/model-runner.js";
 import { createRepl } from "./lib/input.js";
@@ -23,14 +23,17 @@ const flagHelp = argv.includes("-h") || argv.includes("--help");
 const flagInstallSkill = argv.includes("--install-skill");
 const flagVerbose = argv.includes("--verbose") || argv.includes("-v");
 
-// Non-interactive headless mode: --discuss "topic" / --debate "topic"
+// Non-interactive headless mode: --discuss / --debate / --panel "topic"
 const flagDiscussIdx = argv.findIndex(a => a === "--discuss");
 const flagDebateIdx  = argv.findIndex(a => a === "--debate");
+const flagPanelIdx   = argv.findIndex(a => a === "--panel");
 const headlessTopic  = flagDiscussIdx !== -1 ? argv[flagDiscussIdx + 1]
                      : flagDebateIdx  !== -1 ? argv[flagDebateIdx  + 1]
+                     : flagPanelIdx   !== -1 ? argv[flagPanelIdx   + 1]
                      : null;
 const headlessMode   = flagDiscussIdx !== -1 ? "discuss"
                      : flagDebateIdx  !== -1 ? "debate"
+                     : flagPanelIdx   !== -1 ? "panel"
                      : null;
 
 const inlineMsg = argv.filter((a) => !a.startsWith("-")).join(" ").trim();
@@ -151,6 +154,8 @@ if (headlessMode && headlessTopic) {
   let lines;
   if (headlessMode === "discuss") {
     lines = await discuss(headlessTopic, ctx, { capture: !flagVerbose });
+  } else if (headlessMode === "panel") {
+    lines = await panel(headlessTopic, ctx, { capture: !flagVerbose });
   } else {
     lines = await debate(headlessTopic, ctx, { capture: !flagVerbose });
   }
@@ -448,6 +453,7 @@ async function handleLine(input) {
   if (input === "/") {
     const cmds = [
       ["/debate  <topic>",   t("cmd.debate")],
+      ["/panel   <topic>",   t("cmd.panel")],
       ["/discuss <topic>",   t("cmd.discuss")],
       ["/broadcast <msg>",   t("cmd.broadcast")],
       ["/mod <topic>",       t("cmd.mod")],
@@ -522,6 +528,14 @@ async function handleLine(input) {
     const { max, topic, agents } = parseDiscussArgs(input, "/debate");
     if (!topic) { console.log(chalk.red("用法: /debate [@agent...] [--turns N] <话题|文件路径>")); return; }
     await debate(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
+    logSummary(ctx, topic, agents || Object.keys(AGENTS));
+    return;
+  }
+
+  if (input.startsWith("/panel")) {
+    const { max, topic, agents } = parseDiscussArgs(input, "/panel");
+    if (!topic) { console.log(chalk.red("用法: /panel [@agent...] [--rounds N] <话题>")); return; }
+    await panel(topic, ctx, { maxRounds: max || 3, ...(agents && { agents }) });
     logSummary(ctx, topic, agents || Object.keys(AGENTS));
     return;
   }
@@ -671,6 +685,7 @@ if (inlineMsg) {
 // ─── Command definitions for autocomplete ───────────────────────────
 const REPL_COMMANDS = [
   ["/debate",    t("cmd.debate")],
+  ["/panel",     t("cmd.panel")],
   ["/discuss",   t("cmd.discuss")],
   ["/broadcast", t("cmd.broadcast")],
   ["/from",      t("cmd.from")],
