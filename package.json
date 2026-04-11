@@ -9,8 +9,16 @@
   },
   "scripts": {
     "start": "node index.js",
+    "postinstall": "node scripts/install-skill.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "files": [
+    "index.js",
+    "mcp-server.js",
+    "lib/",
+    "skills/",
+    "scripts/"
+  ],
   "keywords": [],
   "author": "",
   "license": "ISC",

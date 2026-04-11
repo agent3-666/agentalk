@@ -19,17 +19,26 @@ const argv = process.argv.slice(2);
 const flagContinue = argv.includes("-c") || argv.includes("--continue");
 const flagFromClaude = argv.includes("--from-claude");
 const flagHelp = argv.includes("-h") || argv.includes("--help");
+const flagInstallSkill = argv.includes("--install-skill");
+
+// Non-interactive headless mode: --discuss "topic" / --debate "topic"
+const flagDiscussIdx = argv.findIndex(a => a === "--discuss");
+const flagDebateIdx  = argv.findIndex(a => a === "--debate");
+const headlessTopic  = flagDiscussIdx !== -1 ? argv[flagDiscussIdx + 1]
+                     : flagDebateIdx  !== -1 ? argv[flagDebateIdx  + 1]
+                     : null;
+const headlessMode   = flagDiscussIdx !== -1 ? "discuss"
+                     : flagDebateIdx  !== -1 ? "debate"
+                     : null;
+
 const inlineMsg = argv.filter((a) => !a.startsWith("-")).join(" ").trim();
 
 // ─── Briefing state ─────────────────────────────────────────────────
 // When --from-claude is set, the named agent becomes the "context source"
 // for this session. On the first substantive message the user types, we
-// call that agent once (silent-ish, with a labeled stream) to produce a
-// structured briefing, inject it as a system message in ctx, then hand
-// off to the moderator. Subsequent messages reuse the same ctx — no
-// re-briefing.
+// Briefing is on-demand: the moderator decides in its planning step whether
+// external context is needed. contextSourceKey just says who to ask.
 let contextSourceKey = null;
-let briefingDone = false;
 if (flagFromClaude) {
   if (AGENTS.claude) {
     contextSourceKey = "claude";
@@ -125,6 +134,32 @@ function printFullHelp() {
 }
 
 if (flagHelp) { printFullHelp(); process.exit(0); }
+
+if (flagInstallSkill) {
+  await import("./scripts/install-skill.js");
+  process.exit(0);
+}
+
+// ─── Headless mode: --discuss / --debate ────────────────────────────
+if (headlessMode && headlessTopic) {
+  const ctx = new ContextManager(process.cwd());
+  let lines;
+  if (headlessMode === "discuss") {
+    lines = await discuss(headlessTopic, ctx, { capture: true });
+  } else {
+    lines = await debate(headlessTopic, ctx, { capture: true });
+  }
+  // Print captured output then extract conclusion for clean stdout
+  const conclusion = ctx.messages.findLast(
+    m => m.role === "system" && /^\[(辩论结论|讨论结论|CONCLUSION|DEBATE_CONCLUSION)\]/.test(m.content)
+  );
+  if (conclusion) {
+    process.stdout.write(conclusion.content + "\n");
+  } else if (lines?.length) {
+    process.stdout.write(lines.join("\n") + "\n");
+  }
+  process.exit(0);
+}
 
 // ─── Parse @mentions ─────────────────────────────────────────────────
 function parseMentions(input) {
@@ -356,6 +391,7 @@ async function handleLine(input) {
       ["/discuss <topic>",   t("cmd.discuss")],
       ["/broadcast <msg>",   t("cmd.broadcast")],
       ["/mod <topic>",       t("cmd.mod")],
+      ["/from [<agent>]",    t("cmd.from")],
       ["/context",           t("cmd.context")],
       ["/export",            t("cmd.export")],
       ["/last",              t("cmd.last")],
@@ -396,7 +432,9 @@ async function handleLine(input) {
   if (input.startsWith("/mod ")) {
     const topic = input.slice(5).trim();
     if (!topic) { console.log(chalk.red(t("err.mod_usage"))); return; }
-    await moderatedSession(topic, ctx);
+    await moderatedSession(topic, ctx, contextSourceKey
+      ? { briefingProvider: runBriefing, contextSource: AGENTS[contextSourceKey]?.displayName }
+      : {});
     logSummary(ctx, topic, Object.keys(AGENTS));
     return;
   }
@@ -472,7 +510,6 @@ async function handleLine(input) {
 
   if (input === "/clear") {
     ctx.clear();
-    briefingDone = false; // fresh ctx → let briefing run again on next question
     console.log(chalk.dim(t("context.cleared")));
     return;
   }
@@ -481,6 +518,37 @@ async function handleLine(input) {
     const ok = ctx.load();
     const s = ctx.stats();
     console.log(ok ? chalk.dim(t("context.loaded", { msgs: s.messages })) : chalk.red(t("context.not_found")));
+    return;
+  }
+
+  if (input.startsWith("/from")) {
+    const key = input.slice(5).trim().toLowerCase();
+    if (key === "none" || key === "off" || key === "clear") {
+      contextSourceKey = null;
+      console.log(chalk.dim("Context source cleared."));
+    } else if (!key) {
+      // Interactive picker: single-select (at most one source)
+      const items = Object.entries(AGENTS).map(([k, a]) => ({ key: k, name: a.displayName }));
+      const preSelected = contextSourceKey ? new Set([contextSourceKey]) : new Set();
+      const selected = await repl.showPicker(items, preSelected);
+      if (selected === null) {
+        console.log(chalk.dim("Cancelled."));
+      } else if (selected.length === 0) {
+        contextSourceKey = null;
+        console.log(chalk.dim("No context source selected."));
+      } else {
+        contextSourceKey = selected[selected.length - 1];
+        console.log(chalk.green(`Context source set to: ${AGENTS[contextSourceKey].displayName}`));
+        console.log(chalk.dim("The moderator will request a briefing when the topic needs it."));
+      }
+    } else if (AGENTS[key]) {
+      contextSourceKey = key;
+      console.log(chalk.green(`Context source set to: ${AGENTS[key].displayName}`));
+      console.log(chalk.dim("The moderator will request a briefing when the topic needs it."));
+    } else {
+      console.log(chalk.red(`Unknown agent: ${key}`));
+      console.log(chalk.dim(`Available: ${Object.keys(AGENTS).join(", ")}`));
+    }
     return;
   }
 
@@ -516,7 +584,9 @@ async function handleLine(input) {
     await debate(prompt, ctx, { maxTurns: targets.length, agents: targets, noJudge: true });
     logSummary(ctx, prompt, targets);
   } else {
-    await moderatedSession(prompt, ctx);
+    await moderatedSession(prompt, ctx, contextSourceKey
+      ? { briefingProvider: runBriefing, contextSource: AGENTS[contextSourceKey]?.displayName }
+      : {});
     logSummary(ctx, prompt, Object.keys(AGENTS));
   }
 }
@@ -532,6 +602,7 @@ const REPL_COMMANDS = [
   ["/debate",    t("cmd.debate")],
   ["/discuss",   t("cmd.discuss")],
   ["/broadcast", t("cmd.broadcast")],
+  ["/from",      t("cmd.from")],
   ["/context",   t("cmd.context")],
   ["/export",    t("cmd.export")],
   ["/last",      t("cmd.last")],
@@ -561,28 +632,14 @@ function isSubstantiveCommand(line) {
   return /^\/(debate|discuss|broadcast|bc|mod)\b/.test(l);
 }
 
-// Strip a leading /debate, /discuss etc. and any @mentions so the briefer
-// gets the actual question the user wants discussed, not the command prefix.
-function extractQuestion(line) {
-  return line
-    .replace(/^\/(debate|discuss|broadcast|bc|mod)\b/i, "")
-    .replace(/@\w+/g, "")
-    .trim() || line;
-}
-
-// Run the briefing phase: call contextSourceKey agent with a structured
-// prompt asking for a [PROBLEM]/[CONTEXT]/[GOAL] briefing. Display the
-// stream with a "[Briefing]" label so the user can see what context is
-// being handed to the moderator. Returns true on success, false on
-// failure (user aborts the discussion in that case, per project principle:
-// if the context-source can't prepare the meeting materials, the meeting
-// is pointless).
-async function runBriefing(userLine) {
+// Run the briefing phase: called by the moderator when it decides external
+// context is needed. Takes the refined topic (already extracted by the
+// moderator's plan). Returns true on success, false on failure.
+async function runBriefing(topic) {
   const briefer = AGENTS[contextSourceKey];
   if (!briefer) return false;
 
-  const question = extractQuestion(userLine);
-  const briefingPrompt = t("prompt.briefing", { name: briefer.name, question });
+  const briefingPrompt = t("prompt.briefing", { name: briefer.name, question: topic });
 
   // Decorate the label so the streamed output is clearly "[Briefing]"
   // rather than looking like a normal discussion reply.
@@ -591,7 +648,7 @@ async function runBriefing(userLine) {
   let result;
   try {
     console.log(chalk.dim(`\n${t("briefing.preparing", { name: briefer.displayName })}`));
-    result = await runAgent(contextSourceKey, briefingPrompt);
+    result = await runAgent(contextSourceKey, briefingPrompt, { timeout: 600 });
   } finally {
     briefer.label = origLabel;
   }
@@ -606,12 +663,12 @@ async function runBriefing(userLine) {
   }
 
   ctx.add("system", `[调用方简报 · briefing from ${briefer.displayName}]\n${result.response.trim()}`);
-  briefingDone = true;
   console.log(chalk.dim(t("briefing.ready")));
   return true;
 }
 
-const repl = createRepl({
+let repl; // forward ref so handleLine can call repl.showPicker
+repl = createRepl({
   prompt: t("input.prompt"),
   commands: REPL_COMMANDS,
   agents: AGENTS,
@@ -621,22 +678,6 @@ const repl = createRepl({
     if (pending === 1) repl.pause();   // only set up scroll region on first entry
     const substantive = isSubstantiveCommand(line);
     try {
-      // Briefing handoff: if a --from-<agent> context source was set and
-      // this is the first substantive question, have that agent write a
-      // structured briefing before handing the topic to the moderator.
-      // If briefing fails → abort this turn (the meeting is pointless
-      // without its context prep).
-      if (substantive && contextSourceKey && !briefingDone) {
-        const ok = await runBriefing(line);
-        if (!ok) {
-          pending--;
-          if (pending === 0) {
-            console.log("\n" + chalk.dim("─".repeat(60)) + "\n");
-            repl.showPrompt();
-          }
-          return;
-        }
-      }
       await handleLine(line);
     } catch (err) {
       console.log(chalk.red(`Error: ${err.message}`));
