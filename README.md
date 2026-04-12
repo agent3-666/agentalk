@@ -223,6 +223,44 @@ Or add a completely custom agent via the interactive wizard:
 
 Agent args support `{prompt}` and `{model}` placeholders, plus a `model_flag` for automatic model injection.
 
+## Claude Code Integration
+
+AgentTalk installs two skills into Claude Code automatically on `npm install`:
+
+### `/agentalk` — Read past discussion results
+
+Recall what the panel decided for the current project:
+
+```
+/agentalk                          # summarize all conclusions
+/agentalk what did we decide about rate limiting
+```
+
+### `/agentalk-consult` — Agent-initiated committee consultation
+
+Claude Code can autonomously call the AgentTalk panel mid-task when it faces real uncertainty — without you asking. Think of it as Claude convening a committee before making a consequential decision.
+
+The skill maps uncertainty type to the right discussion mode:
+
+| Situation | Mode used |
+|-----------|-----------|
+| Architecture decision with trade-offs | `--panel` |
+| Proposal you want stress-tested | `--challenge` |
+| Complex bug / root cause analysis | `--deepen` |
+| Exploring all possible approaches | `--brainstorm` |
+| Binary A vs B choice | `--debate` |
+| Open design question | `--discuss` |
+
+When invoked, Claude frames the question as a well-scoped topic, runs the appropriate headless mode, then tells you the conclusion and how it's applying it:
+
+> "I consulted the AgentTalk panel on the rate limiting approach. Consensus: start with in-process token bucket, add a Redis flag from day one so migration is a config change not a rewrite. Applying that now..."
+
+The skill installs to `~/.claude/skills/` on postinstall. To reinstall manually:
+
+```bash
+node scripts/install-skill.js
+```
+
 ## MCP Server
 
 AgentTalk exposes itself as an MCP server so other AI tools can run panel discussions:
