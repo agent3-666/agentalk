@@ -1,6 +1,6 @@
 ---
 name: agentalk
-description: Read AgentTalk multi-agent discussion results for the current project. Use when the user asks about agentalk discussion outcomes, debate conclusions, agent panel decisions, or what the agents decided. Also use when the user asks "what did we discuss", "what was the conclusion", or references a past panel discussion.
+description: Read AgentTalk multi-agent discussion results for the current project. Use when the user asks about agentalk discussion outcomes, debate conclusions, panel decisions, brainstorm results, or what the agents decided. Also use when the user asks "what did we discuss", "what was the conclusion", or references a past panel discussion.
 user-invocable: true
 allowed-tools:
   - Bash
@@ -9,7 +9,7 @@ allowed-tools:
 
 # AgentTalk Discussion Reader
 
-AgentTalk is a terminal multi-agent collaboration platform. It runs Codex, Gemini, GLM, and Claude in parallel to discuss topics and converge on conclusions. Each project's full discussion history is saved locally and can be recalled here.
+AgentTalk is a terminal multi-agent collaboration platform. It runs Claude Code, Codex, Gemini, OpenCode, and API model agents in parallel discussions and serial debates, converging on conclusions. Each project's full history is saved locally.
 
 ## Usage
 
@@ -37,14 +37,12 @@ ls ~/.agentalk/sessions/$(pwd | sed 's|^/||; s|/|-|g').json 2>/dev/null \
   || echo "NOT FOUND"
 ```
 
-If not found, list all available sessions so the user can pick one:
+If not found, list all available sessions:
 ```bash
 ls ~/.agentalk/sessions/ 2>/dev/null || echo "No sessions yet"
 ```
 
-If the user asks about a different project, derive that project's key from its path the same way.
-
-If no sessions exist at all, tell the user they can start one by running `agentalk` in the project directory.
+If no sessions exist, tell the user: run `agentalk` in the project directory to start one.
 
 ### Step 3 — Read and parse
 
@@ -54,53 +52,76 @@ Read the JSON file. Structure:
 {
   "cwd": "/path/to/project",
   "messages": [
-    { "role": "user",    "content": "...", "timestamp": 1234567890 },
-    { "role": "claude",  "content": "...", "timestamp": 1234567890 },
-    { "role": "codex",   "content": "...", "timestamp": 1234567890 },
-    { "role": "gemini",  "content": "...", "timestamp": 1234567890 },
-    { "role": "opencode","content": "...", "timestamp": 1234567890 },
-    { "role": "system",  "content": "[辩论结论] ...", "timestamp": 1234567890 }
+    { "role": "user",     "content": "...", "timestamp": 1234567890 },
+    { "role": "claude",   "content": "...", "timestamp": 1234567890 },
+    { "role": "codex",    "content": "...", "timestamp": 1234567890 },
+    { "role": "gemini",   "content": "...", "timestamp": 1234567890 },
+    { "role": "opencode", "content": "...", "timestamp": 1234567890 },
+    { "role": "system",   "content": "[CONCLUSION] ...", "timestamp": 1234567890 },
+    { "role": "system",   "content": "[TOKEN_USAGE] {...}", "timestamp": 1234567890 }
   ]
 }
 ```
 
 **Key message types:**
 
-| role | meaning |
-|------|---------|
-| `"system"` starting with `[辩论结论]` or `[讨论结论]` | **Auto-generated convergence conclusion** — the most important content |
-| `"system"` starting with `[CONCLUSION]` or `[DEBATE_CONCLUSION]` | Same, English variant |
-| `"user"` | What the user asked / discussion topics |
-| `"claude"`, `"codex"`, `"gemini"`, `"opencode"` | Individual agent responses |
+| role | content prefix | meaning |
+|------|---------------|---------|
+| `"system"` | `[CONCLUSION]` or `[DEBATE_CONCLUSION]` | **Auto-generated convergence conclusion** — most important |
+| `"system"` | `[讨论结论]` or `[辩论结论]` | Same, Chinese variant |
+| `"system"` | `[TOKEN_USAGE]` | Per-agent token usage for that discussion (JSON) |
+| `"user"` | — | What the user asked / discussion topics |
+| `"claude"`, `"codex"`, etc. | — | Individual agent responses |
+
+**Token usage format** (parse if present):
+```json
+{
+  "agents": {
+    "claude": { "total": 4120, "prompt": 2800, "completion": 1320, "estimated": false },
+    "codex":  { "total": 2340, "estimated": true }
+  },
+  "total": 6460
+}
+```
+`estimated: true` means character-based estimate (CLI agents); `false` means real API count.
 
 ---
 
 ## Step 4 — Present the results
 
-**If the user passed a question** (e.g. `/agentalk what did they decide about rate limiting`): find the relevant discussion thread and focus the summary on that decision.
+**If the user passed a question**: find the relevant discussion thread and focus the summary on that decision.
 
 **Otherwise**, present:
 
-1. **Conclusions** — all `[辩论结论]` / `[讨论结论]` / `[CONCLUSION]` system messages in chronological order. These are the bottom-line answers.
-2. **Topics covered** — brief list of what the user asked (from `role: "user"` messages)
-3. **Notable dissent** — if any agent held out or raised unresolved concerns before converging, surface it
-4. **Open questions** — anything explicitly left unresolved
+1. **Conclusions** — all conclusion system messages in chronological order. These are the bottom-line answers.
+2. **Discussion types used** — which modes ran (discuss / debate / panel / brainstorm / challenge / deepen)
+3. **Topics covered** — brief list of what the user asked (from `role: "user"` messages)
+4. **Notable dissent** — if any agent held out or raised unresolved concerns before converging
+5. **Token cost** — summarize from `[TOKEN_USAGE]` messages if present (useful for cost awareness)
+6. **Open questions** — anything explicitly left unresolved
 
-Keep it concise. The user wants the actionable decisions, not a transcript replay.
+Keep it concise. The user wants actionable decisions, not a transcript replay.
 
 ---
 
 ## Starting a new discussion
 
-If the user wants to run a new discussion (not read past ones), suggest:
+If the user wants to run a new discussion, suggest:
 
 ```bash
-# Interactive session
+# Interactive — moderator picks the right discussion format automatically
 agentalk
 
-# Or headless — runs discussion and prints conclusion, then exits
-agentalk --discuss "your topic here"
-agentalk --debate  "your topic here"
+# Headless — runs discussion and prints conclusion, then exits
+agentalk --discuss    "your topic"   # parallel multi-round
+agentalk --debate     "your topic"   # serial debate
+agentalk --panel      "your topic"   # blind opening + serial debate
+agentalk --brainstorm "your topic"   # divergent, maximize unique perspectives
+agentalk --challenge  "your topic"   # adversarial, find flaws
+agentalk --deepen     "your topic"   # depth-first root cause analysis
+
+# Add --verbose to stream all agent output in real time
+agentalk --discuss "topic" --verbose
 ```
 
-See `/agentalk-consult` for how to invoke a panel discussion from within Claude Code.
+See `/agentalk-consult` for how Claude Code can autonomously invoke the panel as a decision committee during complex tasks.
