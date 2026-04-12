@@ -6,7 +6,7 @@ import { homedir } from "os";
 import chalk from "chalk";
 import { AGENTS, runAgent } from "./lib/agents.js";
 import { ContextManager } from "./lib/context.js";
-import { discuss, debate, panel, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary, feedMessage } from "./lib/discuss.js";
+import { discuss, debate, panel, brainstorm, challenge, deepen, broadcast, moderatedSession, requestStop, stopSignal, pushUserInput, saveSummary, feedMessage } from "./lib/discuss.js";
 import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentModel, resetConfig, getModeratorKey, setModerator, reorderAgents, getGlobalTimeout, setGlobalTimeout, setAgentTimeout, CONFIG_PATH } from "./lib/config.js";
 import { resolveModel, inferProvider, PROVIDER_COLORS, setApiKey, getApiKey, listApiKeys, setCustomEndpoint, getCustomEndpoint } from "./lib/model-runner.js";
 import { createRepl } from "./lib/input.js";
@@ -23,17 +23,26 @@ const flagHelp = argv.includes("-h") || argv.includes("--help");
 const flagInstallSkill = argv.includes("--install-skill");
 const flagVerbose = argv.includes("--verbose") || argv.includes("-v");
 
-// Non-interactive headless mode: --discuss / --debate / --panel "topic"
-const flagDiscussIdx = argv.findIndex(a => a === "--discuss");
-const flagDebateIdx  = argv.findIndex(a => a === "--debate");
-const flagPanelIdx   = argv.findIndex(a => a === "--panel");
-const headlessTopic  = flagDiscussIdx !== -1 ? argv[flagDiscussIdx + 1]
-                     : flagDebateIdx  !== -1 ? argv[flagDebateIdx  + 1]
-                     : flagPanelIdx   !== -1 ? argv[flagPanelIdx   + 1]
+// Non-interactive headless mode: --discuss / --debate / --panel / --brainstorm / --challenge / --deepen
+const flagDiscussIdx    = argv.findIndex(a => a === "--discuss");
+const flagDebateIdx     = argv.findIndex(a => a === "--debate");
+const flagPanelIdx      = argv.findIndex(a => a === "--panel");
+const flagBrainstormIdx = argv.findIndex(a => a === "--brainstorm");
+const flagChallengeIdx  = argv.findIndex(a => a === "--challenge");
+const flagDeepenIdx     = argv.findIndex(a => a === "--deepen");
+const headlessTopic  = flagDiscussIdx    !== -1 ? argv[flagDiscussIdx    + 1]
+                     : flagDebateIdx     !== -1 ? argv[flagDebateIdx     + 1]
+                     : flagPanelIdx      !== -1 ? argv[flagPanelIdx      + 1]
+                     : flagBrainstormIdx !== -1 ? argv[flagBrainstormIdx + 1]
+                     : flagChallengeIdx  !== -1 ? argv[flagChallengeIdx  + 1]
+                     : flagDeepenIdx     !== -1 ? argv[flagDeepenIdx     + 1]
                      : null;
-const headlessMode   = flagDiscussIdx !== -1 ? "discuss"
-                     : flagDebateIdx  !== -1 ? "debate"
-                     : flagPanelIdx   !== -1 ? "panel"
+const headlessMode   = flagDiscussIdx    !== -1 ? "discuss"
+                     : flagDebateIdx     !== -1 ? "debate"
+                     : flagPanelIdx      !== -1 ? "panel"
+                     : flagBrainstormIdx !== -1 ? "brainstorm"
+                     : flagChallengeIdx  !== -1 ? "challenge"
+                     : flagDeepenIdx     !== -1 ? "deepen"
                      : null;
 
 const inlineMsg = argv.filter((a) => !a.startsWith("-")).join(" ").trim();
@@ -152,13 +161,12 @@ if (headlessMode && headlessTopic) {
   // --verbose: stream each agent's output to stdout in real-time (capture=false)
   // default: capture silently, print only the final conclusion (clean for piping)
   let lines;
-  if (headlessMode === "discuss") {
-    lines = await discuss(headlessTopic, ctx, { capture: !flagVerbose });
-  } else if (headlessMode === "panel") {
-    lines = await panel(headlessTopic, ctx, { capture: !flagVerbose });
-  } else {
-    lines = await debate(headlessTopic, ctx, { capture: !flagVerbose });
-  }
+  if      (headlessMode === "discuss")    lines = await discuss   (headlessTopic, ctx, { capture: !flagVerbose });
+  else if (headlessMode === "panel")      lines = await panel     (headlessTopic, ctx, { capture: !flagVerbose });
+  else if (headlessMode === "brainstorm") lines = await brainstorm(headlessTopic, ctx, { capture: !flagVerbose });
+  else if (headlessMode === "challenge")  lines = await challenge (headlessTopic, ctx, { capture: !flagVerbose });
+  else if (headlessMode === "deepen")     lines = await deepen    (headlessTopic, ctx, { capture: !flagVerbose });
+  else                                    lines = await debate    (headlessTopic, ctx, { capture: !flagVerbose });
   if (!flagVerbose) {
     // Print captured output then extract conclusion for clean stdout
     const conclusion = ctx.messages.findLast(
@@ -452,9 +460,12 @@ async function handleLine(input) {
   // "/" alone → show command hints
   if (input === "/") {
     const cmds = [
-      ["/debate  <topic>",   t("cmd.debate")],
-      ["/panel   <topic>",   t("cmd.panel")],
-      ["/discuss <topic>",   t("cmd.discuss")],
+      ["/debate      <topic>", t("cmd.debate")],
+      ["/panel      <topic>",  t("cmd.panel")],
+      ["/brainstorm <topic>",  t("cmd.brainstorm")],
+      ["/challenge  <topic>",  t("cmd.challenge")],
+      ["/deepen     <topic>",  t("cmd.deepen")],
+      ["/discuss    <topic>",  t("cmd.discuss")],
       ["/broadcast <msg>",   t("cmd.broadcast")],
       ["/mod <topic>",       t("cmd.mod")],
       ["/from [<agent>]",    t("cmd.from")],
@@ -536,6 +547,30 @@ async function handleLine(input) {
     const { max, topic, agents } = parseDiscussArgs(input, "/panel");
     if (!topic) { console.log(chalk.red("用法: /panel [@agent...] [--rounds N] <话题>")); return; }
     await panel(topic, ctx, { maxRounds: max || 3, ...(agents && { agents }) });
+    logSummary(ctx, topic, agents || Object.keys(AGENTS));
+    return;
+  }
+
+  if (input.startsWith("/brainstorm")) {
+    const { max, topic, agents } = parseDiscussArgs(input, "/brainstorm");
+    if (!topic) { console.log(chalk.red("用法: /brainstorm [@agent...] [--rounds N] <话题>")); return; }
+    await brainstorm(topic, ctx, { maxRounds: max, ...(agents && { agents }) });
+    logSummary(ctx, topic, agents || Object.keys(AGENTS));
+    return;
+  }
+
+  if (input.startsWith("/challenge")) {
+    const { max, topic, agents } = parseDiscussArgs(input, "/challenge");
+    if (!topic) { console.log(chalk.red("用法: /challenge [@agent...] [--turns N] <话题>")); return; }
+    await challenge(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
+    logSummary(ctx, topic, agents || Object.keys(AGENTS));
+    return;
+  }
+
+  if (input.startsWith("/deepen")) {
+    const { max, topic, agents } = parseDiscussArgs(input, "/deepen");
+    if (!topic) { console.log(chalk.red("用法: /deepen [@agent...] [--turns N] <话题>")); return; }
+    await deepen(topic, ctx, { maxTurns: max, ...(agents && { agents }) });
     logSummary(ctx, topic, agents || Object.keys(AGENTS));
     return;
   }
@@ -684,9 +719,12 @@ if (inlineMsg) {
 
 // ─── Command definitions for autocomplete ───────────────────────────
 const REPL_COMMANDS = [
-  ["/debate",    t("cmd.debate")],
-  ["/panel",     t("cmd.panel")],
-  ["/discuss",   t("cmd.discuss")],
+  ["/debate",      t("cmd.debate")],
+  ["/panel",       t("cmd.panel")],
+  ["/brainstorm",  t("cmd.brainstorm")],
+  ["/challenge",   t("cmd.challenge")],
+  ["/deepen",      t("cmd.deepen")],
+  ["/discuss",     t("cmd.discuss")],
   ["/broadcast", t("cmd.broadcast")],
   ["/from",      t("cmd.from")],
   ["/context",   t("cmd.context")],
