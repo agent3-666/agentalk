@@ -13,8 +13,9 @@ A unified terminal interface to run **Claude Code**, **Codex CLI**, **Gemini CLI
 - **Shared context** — all agents see the same conversation history (up to 512k tokens, auto-compressed via moderator summary)
 - **Moderator pre-flight** — detects URLs in your topic, fetches them, reads mentioned files, synthesizes a `[BRIEFING]` injected into context before round 1
 - **Headless mode** — all six mode flags run a session and exit; `--verbose` streams output in real time
-- **MCP Server** — exposes `ask`, `discuss`, `debate` as MCP tools for other AI tools to call
-- **Claude Code skill** — `/agentalk` and `/agentalk-consult` skills installed into Claude Code
+- **MCP Server** — exposes `ask`, `discuss`, `debate`, `delegate`, `list_quotas`, `list_capabilities`, `remember`, `recall`, `task_status` as MCP tools for other AI tools to call
+- **Delegation (supervisor kernel)** — main agent can delegate sub-tasks to other CLIs via a deterministic code kernel that owns task state + observes quota signals + persists full lifecycle to `~/.agentalk/tasks/`. Spread work across all your subscriptions.
+- **Claude Code skill** — `/agentalk`, `/agentalk-consult`, and `/agentalk-delegate` skills installed into Claude Code
 - **Persistent sessions** — save and resume conversations per directory with `-c`
 
 ## Discussion Modes
@@ -166,6 +167,12 @@ Any OpenAI-compatible model can be added as an agent:
 # Groq
 /agents set-key groq gsk_...
 /agents add-model groq/llama-3.3-70b-versatile
+
+# Cursor (uses your Pro/Business subscription quota)
+/agents set-key cursor <your-cursor-api-key>
+/agents enable cursor
+# Get key from: cursor.com/settings → API Keys
+# Switch model: /agents model cursor cursor/gpt-4o
 ```
 
 New API agents are automatically placed second-to-last so the CLI-based moderator (default: last agent) stays at the end of the debate order.
@@ -212,6 +219,10 @@ AgentTalk ships with 22 pre-defined agent slots. Enable any of them:
 /agents enable q           # Amazon Q Developer CLI
 /agents enable goose       # Goose (Block)
 /agents enable sweagent    # SWE-agent
+
+# Cursor (API-based, requires Pro/Business subscription)
+/agents set-key cursor <your-cursor-api-key>
+/agents enable cursor
 ```
 
 Or add a completely custom agent via the interactive wizard:
@@ -235,6 +246,33 @@ Recall what the panel decided for the current project:
 /agentalk                          # summarize all conclusions
 /agentalk what did we decide about rate limiting
 ```
+
+### `/agentalk-delegate` — Main-agent delegation across subscriptions
+
+For users paying for multiple AI subscriptions (Claude Max + Gemini Plus + ChatGPT Pro + GLM Pro...) who want their main agent to distribute sub-tasks across all of them — spreading load, preserving main-model quota, and using all paid plans.
+
+The main agent (e.g. Claude Code) calls MCP tools:
+- `delegate` — run a sub-task on another CLI with a structured brief-in/brief-out protocol
+- `list_quotas` — observed quota state per agent (parsed from real 429/rate-limit signals, not predicted)
+- `list_capabilities` — strengths, context window, cost tier per agent
+- `remember` / `recall` — project-scoped JSONL memory (append-only, survives sessions)
+- `task_status` — multi-step task progress
+
+**Architecture**: an external **supervisor** (deterministic code, ~400 LOC) owns task lifecycle state, observes quota signals, and executes delegations. The main model is the policy generator — it decides WHAT to delegate; the supervisor reliably executes and persists state. If the main model hits quota mid-task, task state lives in `~/.agentalk/tasks/{id}.json` so any model can resume.
+
+State layout:
+```
+~/.agentalk/
+├── tasks/{id}.json       — full task lifecycle (plan, steps, checkpoints, results)
+├── quota.json            — observed quota state per agent
+├── capability.json       — capability profile per agent (editable)
+└── delegations.jsonl     — append-only log of every delegation (for debug & learning)
+
+{cwd}/.agentalk/
+└── memory.jsonl          — project-level facts/decisions (append-only)
+```
+
+Example flow: user asks main agent to review an 80-page design doc. Main agent calls `list_quotas` → sees Gemini available. Calls `delegate({ agent: "gemini", task: "summarize 15 key decisions", files: ["./doc.md"] })`. Gemini reads the doc with its 2M context, returns `findings`. Main agent synthesizes opinion without burning its own context on the raw document.
 
 ### `/agentalk-consult` — Agent-initiated committee consultation
 
@@ -269,13 +307,19 @@ AgentTalk exposes itself as an MCP server so other AI tools can run panel discus
 agentalk-mcp    # starts the MCP server over stdio
 ```
 
-Three tools available:
+Nine tools available:
 
 | Tool | Description |
 |------|-------------|
 | `ask` | Send a message to one or all agents and get responses |
 | `discuss` | Run a parallel multi-round discussion, returns conclusion + transcript |
 | `debate` | Run a serial debate, returns conclusion + transcript |
+| `delegate` | Main agent delegates a sub-task to another CLI; structured brief-in/out + observed quota |
+| `list_quotas` | Observed quota state per agent (available / quota_exceeded / auth_failed / timeout / unknown) |
+| `list_capabilities` | Per-agent strengths, context window, cost tier, recommended use cases |
+| `remember` | Append a fact/decision/learning to `.agentalk/memory.jsonl` (survives sessions) |
+| `recall` | Read recent memory entries for this project |
+| `task_status` | Query a delegation task's current state and all step progress |
 
 Add to your MCP client config:
 ```json
