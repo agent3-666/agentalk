@@ -1,199 +1,209 @@
 ---
 name: agentalk-delegate
-description: Delegate a sub-task to another AI CLI (Gemini, GLM, Codex, etc.) to save main-model quota and use all subscriptions effectively. Call this autonomously when a sub-task is clearly better-suited to another model (long-doc reading → Gemini 2M context; translation → GLM cheap; etc.) or when you want to preserve your own quota for the harder reasoning. Invoke via MCP tools `delegate`, `list_quotas`, `list_capabilities`, `remember`, `recall`, `task_status`.
+description: Delegate a sub-task to another AI CLI (Gemini, Codex, GLM-via-OpenCode) when you can clearly see that doing so will save main-model context or produce a better result. Invoke autonomously on CONCRETE signals — long-doc reading (>10 pages / >20 files / PDF), bulk translation, one-shot shell/boilerplate code generation, mechanical transformations. Calls via `agentalk-delegate` CLI binary (Bash tool, no MCP setup required). Returns structured [MARKER] output the skill parses into findings + artifacts + diagnostics.
 user-invocable: true
 allowed-tools:
-  - mcp__agentalk__delegate
-  - mcp__agentalk__list_quotas
-  - mcp__agentalk__list_capabilities
-  - mcp__agentalk__remember
-  - mcp__agentalk__recall
-  - mcp__agentalk__task_status
+  - Bash
+  - Read
 ---
 
 # AgentTalk Delegation
 
-You are the **main agent**. A user is paying for multiple AI subscriptions (Claude Max, Gemini Plus, ChatGPT Pro, GLM Pro, etc.) and wants work distributed across them based on capability + remaining quota — so no subscription is wasted and your own quota lasts longer.
+You are the **main agent** in a session where the user pays for multiple AI subscriptions (Claude Max, Gemini Plus, ChatGPT Pro, GLM Pro, etc.). Your job is to **notice when a sub-task is better handed off** to another CLI — saving your own context budget and actually using their paid subscriptions.
 
-An external **supervisor** (deterministic code, not an LLM) owns task state, quota observation, and delegation execution. You drive it via these MCP tools. You are the **policy generator**; the supervisor is the **mechanism**.
+Delegation happens through the `agentalk-delegate` binary. You invoke it via the **Bash tool**. A deterministic supervisor (code, not an LLM) executes the delegate CLI, observes the outcome, persists task state, and prints structured `[MARKER]` lines you parse.
 
----
-
-## When to delegate autonomously
-
-Delegate **without asking the user** when:
-
-| Situation | Best delegate |
-|-----------|---------------|
-| Reading a long doc / PDF / large codebase slice | **Gemini** (2M context) |
-| Translation, bulk low-stakes text work | **OpenCode (GLM)** (cheap) |
-| One-shot code generation, shell scripting | **Codex** (fast, code-focused) |
-| Complex architecture reasoning | Keep it yourself (you're the main) |
-| Heavy multi-file refactor with subtle tradeoffs | Keep it yourself |
-
-**Do NOT delegate**:
-- Core reasoning the user came to you for
-- Anything tied to the user's current explicit question
-- Tasks that require the user-facing conversational state you hold
-
-**DO delegate**:
-- Expensive but bounded sub-tasks (reading a 50-page doc, scanning 20 files, bulk translation)
-- Tasks where another model is clearly better-suited (long context → Gemini)
-- Work you'd otherwise burn quota on
+**No MCP configuration needed.** If `agentalk-delegate` is on PATH, you are ready.
 
 ---
 
-## The delegation protocol
+## When to delegate — concrete signals (Layer 3)
 
-### Step 1 — know the landscape
+**Delegate autonomously** when you see ANY of these specific signals in the user's task:
 
-Before delegating, call `list_quotas` and `list_capabilities`:
+| Signal | Delegate to | Why |
+|--------|-------------|-----|
+| User wants a summary/review of a document > 10 pages | `gemini` | 2M context, cheap per token on long input |
+| Task requires reading > 5 files to answer | `gemini` | saves your context, single-pass read |
+| PDF / OCR / image analysis | `gemini` | multimodal, you aren't |
+| Translation between human languages (EN↔ZH etc.) | `opencode` | GLM is cheap and strong at Chinese |
+| Bulk mechanical transformation (N items → N items) | `opencode` | low cost tier |
+| One-shot shell script / scaffolding / `Makefile` / boilerplate | `codex` | code-focused, fast |
+| "Generate N fixtures / test data" | `codex` | bounded, structural |
+| Scan whole repo for pattern X (grep-level question) | `gemini` | reads files, you don't have to |
 
-- `list_quotas` → observed state per agent: `available`, `quota_exceeded`, `auth_failed`, `timeout`, `unknown`
-- `list_capabilities` → strengths, context window, cost tier, good_for
+**DO NOT delegate** (keep in your own session):
 
-Pick an agent whose `status !== "quota_exceeded"` and whose strengths match the task.
+- The user's **core question** to you — answer it yourself
+- Anything that needs your ongoing conversational state or prior context
+- Complex multi-step architectural reasoning (your strength)
+- Work where you're halfway through and have context the delegate can't easily receive
+- Tasks under ~2k tokens worth of output — delegation overhead isn't worth it
+- Subjective calls that need the user's trust in *your* judgment
 
-### Step 2 — construct the brief
+**Rule of thumb**: if after delegation you'd still have to read the result carefully and reason over it, delegate saved no context — just do it yourself.
 
-Call `delegate(agent, task, files?, context?, output?, budget?)`:
+---
 
-```
-{
-  agent: "gemini",
-  task: "Extract the 10 core design decisions from the spec",
-  files: ["./spec.md", "./architecture.md"],
-  context: "We're reviewing an AgentBase proposal to compare with our 2nd Neural project. User wants decisions not implementation detail.",
-  output: "Numbered list, each decision in 1-2 sentences",
-  budget: "concise, 500 words max"
-}
-```
+## How to delegate
 
-**Brief-in rules:**
-- `task` — one sentence, imperative
-- `files` — point, don't paste. Let the delegate read them with its own context budget.
-- `context` — 2-3 lines of what the delegate MUST know. Do not dump your full conversation — that wastes their tokens and yours.
-- `output` — specify format if it matters
-- `budget` — word/token hint helps the delegate calibrate detail level
+### 1. Scout (once per session, optional)
 
-### Step 3 — read the structured result
+If unsure who's available / best:
 
-`delegate` returns:
-
-```
-{
-  status: "ok" | "quota_exceeded" | "auth_failed" | "timeout" | "failed" | "blocked",
-  agent: "gemini",
-  task_id: "t_...",
-  step_id: "s1",
-  findings: "...",            // the substantive result — read this carefully
-  artifacts: [...],            // files the delegate wrote — stay on disk
-  unknowns: [...],             // what the delegate could NOT determine
-  diagnostics: {
-    outcome: ...,
-    detail: ...,               // why it succeeded/failed
-    reset_hint: ...,           // when quota resets, if applicable
-    suggestion: ...,           // alternative agent to try
-    elapsed_ms, tokens
-  }
-}
+```bash
+agentalk-delegate quotas           # who's not rate-limited right now
+agentalk-delegate capabilities     # each agent's strengths + cost tier
 ```
 
-### Step 4 — act on the result
+Skip these if you already know from the signals above.
 
-- `status: ok` → ingest `findings`, continue your work, ignore `artifacts`/`raw_response` unless you need specifics
-- `status: quota_exceeded` / `auth_failed` → do NOT silently retry with same agent. Either:
-  - Follow `diagnostics.suggestion` and call `delegate` again with a different agent
-  - Surface to the user: "Gemini is rate-limited (resets in ~3h). I can use GLM instead, or we can pause."
-- `status: timeout` → decide: retry with longer budget? Different agent? Ask user.
-- `status: failed` → inspect `diagnostics.detail`, likely need to reframe the task
+### 2. Delegate
 
-**Critical**: never pretend a failed delegation succeeded. The supervisor logged everything to `~/.agentalk/delegations.jsonl` — the user can see.
+```bash
+agentalk-delegate <agent> "<task>" \
+  --files "path1,path2" \
+  --context "2-3 lines of background the delegate needs" \
+  --output "format or focus" \
+  --budget "length hint"
+```
 
-### Step 5 — remember what matters
+**Concrete example**:
 
-After a meaningful delegation (not trivial ones), consider calling `remember(fact, context)` to persist:
+```bash
+agentalk-delegate gemini "Extract the 10 core design decisions from this spec" \
+  --files "./spec.md,./architecture.md" \
+  --context "Reviewing an AgentBase proposal against our 2nd Neural project. User wants decisions, not implementation detail." \
+  --output "Numbered list, 1-2 sentences per decision" \
+  --budget "500 words"
+```
 
-- Decisions made during the task ("we chose Redis over in-process caching because scale")
-- Discovered constraints ("Gemini API returns malformed JSON when response > 100k tokens — chunk requests")
-- Capability learnings ("GLM is poor at Typescript generics, use Codex instead next time")
+### 3. Parse output
 
-These accumulate in `.agentalk/memory.jsonl` (append-only, survives sessions). Call `recall` at the start of a new session to pick up context.
+The CLI prints structured markers on stdout:
+
+```
+[STATUS] ok
+[AGENT] gemini
+[TASK] /Users/.../.agentalk/tasks/t_xxx.json
+[TOKENS] 749 (est)
+[ELAPSED_MS] 38474
+[FINDINGS]
+1. ...
+2. ...
+[END_FINDINGS]
+[UNKNOWNS]
+- ...
+[END_UNKNOWNS]
+```
+
+Parse by reading between `[FINDINGS]` and `[END_FINDINGS]`. For full detail (including the brief and per-step timing) read the `[TASK] <path>` file:
+
+```bash
+cat <path-from-TASK-line>
+```
+
+### 4. Handle each status
+
+- `[STATUS] ok` → use `[FINDINGS]`, continue
+- `[STATUS] quota_exceeded` → read `[DIAGNOSTICS]` for `suggestion` (alternative agent). Either retry with that agent, OR surface to user: "Gemini is rate-limited (resets in ~3h). I can use GLM via OpenCode instead, or we can pause."
+- `[STATUS] auth_failed` → surface to user: "This CLI isn't authenticated. Run `<cli> login` first."
+- `[STATUS] timeout` → decide: longer budget? different agent? ask user?
+- `[STATUS] failed` / `system_error` → read `detail`, reframe the task or fall back to doing it yourself
+
+**Never silently retry a failed delegation with a different agent**. Always either tell the user OR keep the same agent with a different brief. Silent fallback destroys trust.
+
+---
+
+## Visible value (Layer 4) — REQUIRED
+
+Every time you delegate, **explicitly tell the user** what happened, in your reply to them. Not a postscript — part of the narrative.
+
+✅ **Good**:
+> "I had Gemini read the 60-page spec (its 2M context handles the full doc in one pass — saved me about 40k tokens of working context). Here's the summary: ..."
+
+✅ **Good (failure case)**:
+> "I tried to delegate this to Gemini but it's currently rate-limited (resets in ~2h). I handled the read myself instead — here are the findings: ..."
+
+❌ **Bad (silent)**:
+> "Here's the summary: ..."  
+> *(user has no idea Gemini did the heavy lifting; no reinforcement for delegation habit next time)*
+
+❌ **Bad (technical noise)**:
+> "Invoked agentalk-delegate gemini with --files, got findings..."  
+> *(user doesn't care about the mechanics; show the value instead)*
+
+The principle: if the user can't see that delegation happened, they have no reason to keep this setup.
 
 ---
 
 ## Multi-step tasks
 
-For work involving multiple delegations that share state, pass `task_id` from the first delegation back into subsequent calls:
+Share a task_id across delegations when they logically belong together:
 
-```
-r1 = delegate({ agent: "gemini", task: "extract decisions from doc" })
-r2 = delegate({
-  agent: "opencode",
-  task: "translate r1's findings to Chinese",
-  context: r1.findings,             // or reference r1.task_id's artifacts
-  task_id: r1.task_id,               // same task, new step
-})
+```bash
+# Step 1
+agentalk-delegate gemini "Extract decisions from ./spec.md" --files "./spec.md"
+# note [TASK] line — extract task_id from path: t_20260422nnnnnn_xxxxxx
+
+# Step 2 (reuses task state)
+agentalk-delegate opencode "Translate previous step's findings to Chinese" \
+  --task-id t_20260422nnnnnn_xxxxxx \
+  --context "Step 1 produced a decision list; translate preserving numbering."
 ```
 
-Use `task_status(task_id)` to review progress of a multi-step task.
+Review the full task at any time:
+
+```bash
+agentalk-delegate task t_20260422nnnnnn_xxxxxx
+```
 
 ---
 
-## Examples
+## Memory — remember what matters
 
-### Good: long-doc summary to save your own context
+After a delegation taught you something non-obvious and reusable (not just the immediate answer), persist it:
 
-User asks you to review a 80-page design doc.
+```bash
+agentalk-delegate remember "Gemini truncates responses around ~100k output tokens; chunk long outputs"
+agentalk-delegate remember "GLM is poor at TypeScript generics; prefer codex for TS type work"
+```
 
-You:
-1. `list_capabilities` → Gemini has 2M context, "good_for": ["reading large docs"]
-2. `list_quotas` → Gemini `available`
-3. `delegate({ agent: "gemini", task: "Summarize this design doc in 15 bullets, highlighting any contradictions or gaps", files: ["./doc.md"], output: "numbered bullets" })`
-4. Receive `findings` → synthesize your own opinion → respond to user
+This appends to `.agentalk/memory.jsonl` in the current project (survives sessions). Recall at start of a new session:
 
-You saved 50k+ tokens of your own context. User gets a faster, cheaper answer.
+```bash
+agentalk-delegate recall --limit 20
+```
 
-### Good: rate-limit awareness
+**Don't remember**: the specific task result (that's what the task.json is for), anything trivial, things that change often.
 
-You try `delegate({ agent: "gemini", ... })` → `status: quota_exceeded`, `diagnostics.reset_hint: "resets in 2h"`, `suggestion: "try one of: opencode, codex"`.
+**Do remember**: capability discoveries, gotchas, project-specific delegation patterns.
 
-You tell the user: "Gemini is rate-limited for the next 2 hours. I can hand this off to GLM (via OpenCode) — cheaper but smaller context. Want me to chunk the doc and use it, or wait?"
+---
 
-### Bad: delegating the user's actual question
+## Environment check
 
-User: "Explain the trade-off between X and Y."
+```bash
+which agentalk-delegate || echo "not installed"
+agentalk-delegate init   # detect CLIs, re-install skills, print status
+```
 
-Do NOT delegate this to another agent. The user asked YOU. Answer it yourself.
-
-### Bad: silent fallback
-
-Delegation to Gemini fails → you just retry with Codex and present the result as if nothing happened. The user has no idea their Gemini subscription appears broken.
-
-**Instead**: tell them what happened, what you did about it, and whether action is needed.
+If missing: `npm install -g agentalk`.
 
 ---
 
 ## Quick reference
 
-| Tool | When |
-|------|------|
-| `list_quotas` | Before your first delegation of a session |
-| `list_capabilities` | When unsure who's best for a task |
-| `delegate` | The actual work |
-| `task_status` | Checking multi-step progress |
-| `remember` | When you learned something non-obvious worth keeping |
-| `recall` | Start of a new session on this project |
+| Command | Purpose |
+|---------|---------|
+| `agentalk-delegate <agent> "<task>" [opts]` | Main operation |
+| `agentalk-delegate quotas` | Observed quota state (real signals, not predicted) |
+| `agentalk-delegate capabilities` | What each agent is good at |
+| `agentalk-delegate task <id>` | Inspect a delegation task |
+| `agentalk-delegate remember "<fact>"` | Persist a project-level learning |
+| `agentalk-delegate recall` | Read project memory |
+| `agentalk-delegate review` | Per-agent success rates (after some usage) |
+| `agentalk-delegate init` | Setup status + next-step hints |
+| `agentalk-delegate help` | Full usage |
 
-## Availability check
-
-```bash
-which agentalk-mcp || echo "not installed"
-```
-
-If missing: `npm install -g agentalk` or `npm link` from the repo.
-
-MCP client configuration:
-```json
-{ "mcpServers": { "agentalk": { "command": "agentalk-mcp" } } }
-```
+All commands accept `--json` where structured output is useful for scripting.

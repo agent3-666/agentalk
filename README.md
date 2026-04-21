@@ -1,9 +1,15 @@
 # AgentTalk
 
-A unified terminal interface to run **Claude Code**, **Codex CLI**, **Gemini CLI**, **OpenCode**, and more as a collaborative agent panel — with shared context, six discussion modes, a moderator that plans and fetches materials, and token usage tracking.
+Two complementary tools for multi-CLI AI collaboration:
+
+- **`agentalk`** — run Claude Code, Codex CLI, Gemini CLI, OpenCode and more as a collaborative panel with shared context, six discussion modes, a moderator, and token tracking
+- **`agentalk-delegate`** — separate binary for Skill+CLI sub-task delegation: a main AI agent hands off a single sub-task to another CLI based on capability + observed quota, with structured brief-in/brief-out and persistent task state
+
+The two work independently. Use `agentalk` when you want **multiple agents to talk to each other**; use `agentalk-delegate` when you want your **main agent to quietly route a sub-task** to a specialist CLI.
 
 ## Features
 
+### Discussion (`agentalk`)
 - **6 discussion modes** — from parallel brainstorming to adversarial review to depth-first drilling (see table below)
 - **Moderator-led sessions** — every plain message gets routed through a moderator that selects the right mode, fetches URLs/files mentioned in the topic, synthesizes a briefing, then runs the session
 - **API model agents** — plug in any OpenAI-compatible model (OpenRouter, DeepSeek, Groq, etc.) via `/agents add-model`
@@ -13,10 +19,18 @@ A unified terminal interface to run **Claude Code**, **Codex CLI**, **Gemini CLI
 - **Shared context** — all agents see the same conversation history (up to 512k tokens, auto-compressed via moderator summary)
 - **Moderator pre-flight** — detects URLs in your topic, fetches them, reads mentioned files, synthesizes a `[BRIEFING]` injected into context before round 1
 - **Headless mode** — all six mode flags run a session and exit; `--verbose` streams output in real time
-- **MCP Server** — exposes `ask`, `discuss`, `debate`, `delegate`, `list_quotas`, `list_capabilities`, `remember`, `recall`, `task_status` as MCP tools for other AI tools to call
-- **Delegation (supervisor kernel)** — main agent can delegate sub-tasks to other CLIs via a deterministic code kernel that owns task state + observes quota signals + persists full lifecycle to `~/.agentalk/tasks/`. Spread work across all your subscriptions.
-- **Claude Code skill** — `/agentalk`, `/agentalk-consult`, and `/agentalk-delegate` skills installed into Claude Code
 - **Persistent sessions** — save and resume conversations per directory with `-c`
+
+### Delegation (`agentalk-delegate`)
+- **Deterministic supervisor kernel** — code, not an LLM. Owns task lifecycle state, observes quota signals (parses 429/rate-limit/auth from real CLI stderr), executes delegations. Main model is the policy generator; kernel is the mechanism.
+- **Brief-in/brief-out protocol** — structured task + files + context + budget → structured findings + artifacts + unknowns + diagnostics
+- **Persistent task state** at `~/.agentalk/tasks/{id}.json` — written before delegation executes, so any model can resume if the main agent dies
+- **Project-level memory** at `.agentalk/memory.jsonl` (append-only JSONL, survives sessions)
+- **Skill+CLI integration** — default path, zero extra setup. The `/agentalk-delegate` Claude Code skill invokes the CLI via Bash; no MCP registration required.
+
+### Integration
+- **Claude Code skills** — `/agentalk`, `/agentalk-consult`, `/agentalk-delegate` auto-installed on postinstall (and re-installable via `agentalk-delegate init`)
+- **MCP Server (optional, secondary)** — `agentalk-mcp` exposes `ask`, `discuss`, `debate`, `delegate`, `list_quotas`, `list_capabilities`, `remember`, `recall`, `task_status` for MCP-based clients. Most users don't need this; skills use CLI directly.
 
 ## Discussion Modes
 
@@ -57,10 +71,10 @@ Or from source:
 git clone https://github.com/agent3-666/agentalk.git
 cd agentalk
 npm install
-npm link        # makes `agentalk`, `agentalk-mcp`, `agentalk-model` available globally
+npm link        # makes `agentalk`, `agentalk-mcp`, `agentalk-model`, `agentalk-delegate` available globally
 ```
 
-The postinstall script automatically installs the `/agentalk` Claude Code skill.
+The postinstall script automatically installs the three Claude Code skills (`/agentalk`, `/agentalk-consult`, `/agentalk-delegate`) into `~/.claude/skills/`. Run `agentalk-delegate init` at any time to re-install and see setup status.
 
 ## Usage
 
@@ -251,14 +265,38 @@ Recall what the panel decided for the current project:
 
 For users paying for multiple AI subscriptions (Claude Max + Gemini Plus + ChatGPT Pro + GLM Pro...) who want their main agent to distribute sub-tasks across all of them — spreading load, preserving main-model quota, and using all paid plans.
 
-The main agent (e.g. Claude Code) calls MCP tools:
-- `delegate` — run a sub-task on another CLI with a structured brief-in/brief-out protocol
-- `list_quotas` — observed quota state per agent (parsed from real 429/rate-limit signals, not predicted)
-- `list_capabilities` — strengths, context window, cost tier per agent
-- `remember` / `recall` — project-scoped JSONL memory (append-only, survives sessions)
-- `task_status` — multi-step task progress
+This is a **separate mode** from agentalk discussions. The main agent (e.g. Claude Code) invokes the `agentalk-delegate` CLI via the Bash tool — no MCP registration required. The skill lives at `~/.claude/skills/agentalk-delegate.md` (auto-installed).
 
-**Architecture**: an external **supervisor** (deterministic code, ~400 LOC) owns task lifecycle state, observes quota signals, and executes delegations. The main model is the policy generator — it decides WHAT to delegate; the supervisor reliably executes and persists state. If the main model hits quota mid-task, task state lives in `~/.agentalk/tasks/{id}.json` so any model can resume.
+```bash
+agentalk-delegate <agent> "<task>" \
+  --files "path1,path2" \
+  --context "background" \
+  --output "desired format" \
+  --budget "length hint"
+
+agentalk-delegate quotas           # observed quota state (real signals, not predicted)
+agentalk-delegate capabilities     # per-agent strengths + cost tier
+agentalk-delegate remember "fact"  # persist a project-level learning
+agentalk-delegate recall           # read back project memory
+agentalk-delegate task <id>        # inspect a delegation task
+agentalk-delegate review           # per-agent performance from delegations.jsonl
+agentalk-delegate init             # setup status + next-step hints
+```
+
+Output is structured `[MARKER]` lines on stdout so skills/scripts parse deterministically:
+
+```
+[STATUS] ok
+[AGENT] gemini
+[TASK] /Users/.../.agentalk/tasks/t_xxx.json
+[TOKENS] 749 (est)
+[ELAPSED_MS] 38474
+[FINDINGS]
+...
+[END_FINDINGS]
+```
+
+**Architecture**: an external **supervisor** (deterministic code, ~500 LOC in `lib/supervisor.js`) owns task lifecycle state, observes quota signals, and executes delegations. The main model is the policy generator — it decides WHAT to delegate; the supervisor reliably executes and persists state. If the main model hits quota mid-task, task state lives in `~/.agentalk/tasks/{id}.json` so any model can resume.
 
 State layout:
 ```
@@ -272,7 +310,9 @@ State layout:
 └── memory.jsonl          — project-level facts/decisions (append-only)
 ```
 
-Example flow: user asks main agent to review an 80-page design doc. Main agent calls `list_quotas` → sees Gemini available. Calls `delegate({ agent: "gemini", task: "summarize 15 key decisions", files: ["./doc.md"] })`. Gemini reads the doc with its 2M context, returns `findings`. Main agent synthesizes opinion without burning its own context on the raw document.
+Example flow: user asks main agent to review an 80-page design doc. Main agent runs `agentalk-delegate quotas` → sees Gemini available. Runs `agentalk-delegate gemini "summarize 15 key decisions" --files ./doc.md`. Gemini reads the doc with its 2M context, CLI prints `[FINDINGS]`. Main agent synthesizes opinion without burning its own context on the raw document — and tells the user what happened: "I used Gemini to read the spec, saved ~40k tokens of my context."
+
+The same primitives are also exposed as MCP tools in `agentalk-mcp` for MCP-based clients, but the default path is Skill+CLI.
 
 ### `/agentalk-consult` — Agent-initiated committee consultation
 
