@@ -55,6 +55,8 @@ If you're unsure, run `agentalk-delegate capabilities` — it prints the badges 
 
 These are the three **preferred subscription** agents (`gemini`, `codex`, `opencode`). Use them freely — the user has subscriptions already paid.
 
+**Task sizing — don't over-trim out of fear.** The default delegation timeout is **600 seconds** (10 min), not 180s. If you previously saw a `timeout` error at 180s in an earlier conversation or session, that was the OLD default and is no longer relevant. Gemini can comfortably handle 9–15 file structured surveys within 600s. Trust the default; don't self-limit to 3-5 files unless the task genuinely is small. For truly heavy tasks (20+ files, long PDFs) pass `--timeout 1200`. Partial timeouts auto-return whatever was captured as `[STATUS] timeout_partial` — nothing is lost.
+
 **`pay_per_call` agents** (e.g. `qwen3-plus` via `agentalk-model`): costs money per call. Only delegate to these if (a) the user explicitly asks, OR (b) all preferred subscription agents are unavailable/rate-limited AND the task is important.
 
 **DO NOT delegate** (keep in your own session):
