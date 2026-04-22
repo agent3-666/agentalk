@@ -17,20 +17,45 @@ Delegation happens through the `agentalk-delegate` binary. You invoke it via the
 
 ---
 
+## Agent selection: priority + billing
+
+Every agent has two metadata fields (visible in `agentalk-delegate capabilities`):
+
+- **priority**: `preferred` / `normal` / `avoid` / `main`
+- **billing**: `subscription` / `pay_per_call` / `free`
+
+**Selection rules** (in order):
+
+1. **Prefer `priority: preferred` agents first** — user flagged these as "use freely"
+2. **Prefer `billing: subscription`** over `pay_per_call` — the user's already paid, use the subscription
+3. **Never delegate TO `priority: main`** — that's the main agent itself (usually `claude`)
+4. **Avoid `priority: avoid` or `billing: pay_per_call`** unless no preferred subscription agent fits the task OR the user explicitly asked
+5. On fit tie, match the task's nature to `good_for` and `strengths`
+
+If you're unsure, run `agentalk-delegate capabilities` — it prints the badges and the user's notes so you can see what they want.
+
 ## When to delegate — concrete signals (Layer 3)
 
 **Delegate autonomously** when you see ANY of these specific signals in the user's task:
 
-| Signal | Delegate to | Why |
-|--------|-------------|-----|
-| User wants a summary/review of a document > 10 pages | `gemini` | 2M context, cheap per token on long input |
-| Task requires reading > 5 files to answer | `gemini` | saves your context, single-pass read |
-| PDF / OCR / image analysis | `gemini` | multimodal, you aren't |
-| Translation between human languages (EN↔ZH etc.) | `opencode` | GLM is cheap and strong at Chinese |
-| Bulk mechanical transformation (N items → N items) | `opencode` | low cost tier |
+| Signal | Default delegate | Why |
+|--------|------------------|-----|
+| Summary/review of a document > 10 pages | `gemini` | 2M context, single-pass read |
+| Task requires reading > 5 files to answer | `gemini` | saves your context budget |
+| PDF / OCR / image analysis | `gemini` | multimodal |
+| Scan whole repo for pattern X (grep-level question) | `gemini` | reads files for you |
+| Bug hunting across many files in a big codebase | `gemini` | long-context scan |
+| Translation between human languages (EN↔ZH etc.) | `opencode` (GLM) | cheap, strong Chinese |
+| Bulk mechanical transformation (N items → N items) | `opencode` (GLM) | low cost tier |
+| Chinese-heavy text writing / rewriting | `opencode` (GLM) | native strength |
 | One-shot shell script / scaffolding / `Makefile` / boilerplate | `codex` | code-focused, fast |
 | "Generate N fixtures / test data" | `codex` | bounded, structural |
-| Scan whole repo for pattern X (grep-level question) | `gemini` | reads files, you don't have to |
+| Quick code edits in known files | `codex` | iteration speed |
+| Bug hunting in CLI / shell / infra code | `codex` | shell strength |
+
+These are the three **preferred subscription** agents (`gemini`, `codex`, `opencode`). Use them freely — the user has subscriptions already paid.
+
+**`pay_per_call` agents** (e.g. `qwen3-plus` via `agentalk-model`): costs money per call. Only delegate to these if (a) the user explicitly asks, OR (b) all preferred subscription agents are unavailable/rate-limited AND the task is important.
 
 **DO NOT delegate** (keep in your own session):
 

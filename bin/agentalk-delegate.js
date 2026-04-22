@@ -158,9 +158,40 @@ function cmdCapabilities() {
     process.stdout.write(JSON.stringify(caps, null, 2) + "\n");
     return;
   }
-  console.log(chalk.bold("\nAgent capabilities (defaults + local overrides from ~/.agentalk/capability.json):\n"));
-  for (const [k, v] of Object.entries(caps)) {
-    console.log(`  ${chalk.bold(k)}${chalk.dim("  (cost: " + (v.cost_tier || "?") + ", ctx: " + (v.context_window || 0).toLocaleString() + ")")}`);
+  console.log(chalk.bold("\nAgent capabilities"));
+  console.log(chalk.dim(`  defaults + your overrides at ~/.agentalk/capability.json\n`));
+
+  // Sort: preferred → normal → main → avoid (so preferred agents show first)
+  const order = { preferred: 0, normal: 1, main: 2, avoid: 3 };
+  const sorted = Object.entries(caps).sort((a, b) => {
+    const pa = order[a[1]?.priority] ?? 99;
+    const pb = order[b[1]?.priority] ?? 99;
+    return pa - pb;
+  });
+
+  for (const [k, v] of sorted) {
+    // Header line with priority badge + billing badge
+    const billingBadge = v.billing === "subscription"
+      ? chalk.green("[subscription]")
+      : v.billing === "pay_per_call"
+      ? chalk.yellow("[pay-per-call]")
+      : v.billing === "free"
+      ? chalk.cyan("[free]")
+      : chalk.dim("[billing?]");
+    const priorityBadge = v.priority === "preferred"
+      ? chalk.bgGreen.black(" PREFERRED ")
+      : v.priority === "main"
+      ? chalk.bgBlue.white(" MAIN ")
+      : v.priority === "avoid"
+      ? chalk.bgYellow.black(" AVOID ")
+      : chalk.dim(" normal ");
+
+    console.log(`  ${chalk.bold(k.padEnd(12))} ${priorityBadge} ${billingBadge}`);
+    if (v.note) {
+      console.log(`    ${chalk.dim(v.note)}`);
+    }
+    const ctxStr = (v.context_window || 0).toLocaleString();
+    console.log(`    ${chalk.dim("cost:")} ${v.cost_tier || "?"}  ${chalk.dim("context:")} ${ctxStr} tokens`);
     if (v.strengths?.length) console.log(`    ${chalk.dim("strengths:")} ${v.strengths.join(", ")}`);
     if (v.good_for?.length)  console.log(`    ${chalk.dim("good for: ")} ${v.good_for.join("; ")}`);
     if (v.weakness?.length) {
@@ -169,6 +200,8 @@ function cmdCapabilities() {
     }
     console.log("");
   }
+  console.log(chalk.dim("  Edit ~/.agentalk/capability.json to change priority (preferred/normal/avoid/main)"));
+  console.log(chalk.dim("  or update notes. Changes take effect on next call.\n"));
 }
 
 function cmdRemember(fact) {
