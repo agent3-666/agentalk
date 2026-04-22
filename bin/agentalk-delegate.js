@@ -16,7 +16,7 @@
 //   agentalk-delegate review
 //   agentalk-delegate help
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
@@ -31,6 +31,8 @@ import {
   rememberFact,
   recallMemory,
   getTask,
+  readTaskEvents,
+  readTaskOutput,
 } from "../lib/supervisor.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -49,25 +51,29 @@ ${chalk.bold("agentalk-delegate")} — multi-CLI sub-task delegation (separate f
 
 ${chalk.bold("Primary: delegate a task")}
   ${chalk.cyan('agentalk-delegate <agent> "<task>"')} [options]
-    --files <a,b>           files the delegate should read (paths relative to cwd)
-    --context "..."         2-3 lines of background the delegate needs
-    --output "..."          expected output format / focus
-    --budget "..."          length / detail hint (e.g. "200 words")
-    --task-id <id>          reuse an existing task (multi-step)
+    --files <a,b>                files the delegate should read (paths relative to cwd)
+    --context "..."              2-3 lines of background the delegate needs
+    --output "..."               expected output format / focus
+    --budget "..."               length / detail hint (e.g. "200 words")
+    --timeout <sec>              override default timeout (default: 600s for delegations)
+    --task-id <id>               reuse an existing task (multi-step)
+    --resume-step <tid>:<sid>    prepend that step's stdout as prior context (continues delegate's prior work)
 
 ${chalk.bold("Helpers")}
-  ${chalk.cyan("agentalk-delegate quotas")}           observed quota state per agent (from real 429/rate-limit signals)
-  ${chalk.cyan("agentalk-delegate capabilities")}     per-agent strengths / ctx window / cost tier
-  ${chalk.cyan('agentalk-delegate remember "fact"')}  append a fact to project memory (.agentalk/memory.jsonl)
-  ${chalk.cyan("agentalk-delegate recall")}           read recent project memory entries
-  ${chalk.cyan("agentalk-delegate task <id>")}        query a delegation task's state
-  ${chalk.cyan("agentalk-delegate init")}             setup status (CLIs, skills) + next-step hints
-  ${chalk.cyan("agentalk-delegate review")}           per-agent performance from delegations.jsonl
+  ${chalk.cyan("agentalk-delegate quotas")}              observed quota state per agent (from real 429/rate-limit signals)
+  ${chalk.cyan("agentalk-delegate capabilities")}        per-agent strengths / ctx window / cost tier / subscription vs pay-per-call
+  ${chalk.cyan('agentalk-delegate remember "fact"')}    append a fact to project memory (.agentalk/memory.jsonl)
+  ${chalk.cyan("agentalk-delegate recall")}              read recent project memory entries
+  ${chalk.cyan("agentalk-delegate task <id>")}           query a delegation task's state
+  ${chalk.cyan("agentalk-delegate tail <id>")}           stream a task's stdout events ([--step s1] [--stream stderr] [--follow])
+  ${chalk.cyan("agentalk-delegate init")}                setup status (CLIs, skills) + next-step hints
+  ${chalk.cyan("agentalk-delegate review")}              per-agent performance from delegations.jsonl
 
 ${chalk.bold("Output format (for shell/skill parsing)")}
-  Delegation success → [STATUS] ok / [TASK] <path> / [FINDINGS] ... / [TOKENS] N
-  Delegation failure → [STATUS] <outcome> / [DIAGNOSTICS] ...
-  Always includes [TASK] <path> to the full task JSON for deep inspection.
+  Delegation success   → [STATUS] ok / [TASK] <jsonl path> / [TASK_ID] <id> / [FINDINGS] ... / [TOKENS] N
+  Partial on timeout   → [STATUS] timeout_partial / [FINDINGS] <what was captured so far>
+  Delegation failure   → [STATUS] <outcome> / [DIAGNOSTICS] ...
+  Full context lives in ~/.agentalk/tasks/<id>.jsonl — one file per task, event-stream format.
 
 ${chalk.bold("Available agents")}: ${Object.keys(AGENTS).join(", ")}
 `);
@@ -77,6 +83,23 @@ ${chalk.bold("Available agents")}: ${Object.keys(AGENTS).join(", ")}
 async function cmdDelegate(agent, task) {
   const filesRaw = argValue("--files");
   const files = filesRaw ? filesRaw.split(",").map(s => s.trim()).filter(Boolean) : undefined;
+  const timeoutStr = argValue("--timeout");
+  const timeout = timeoutStr ? parseInt(timeoutStr, 10) : null;
+  if (timeoutStr && (isNaN(timeout) || timeout <= 0)) {
+    console.error(`Invalid --timeout value: ${timeoutStr}. Expected positive integer seconds.`);
+    process.exit(2);
+  }
+  // --resume-step accepts "taskId:stepId" form, e.g. t_xxx:s1
+  const resumeRaw = argValue("--resume-step");
+  let resumeStep = null;
+  if (resumeRaw) {
+    const [tId, sId] = resumeRaw.split(":");
+    if (!tId || !sId) {
+      console.error("Invalid --resume-step format. Expected <task-id>:<step-id>, e.g. t_xxx:s1");
+      process.exit(2);
+    }
+    resumeStep = { task_id: tId, step_id: sId };
+  }
   const result = await supervisorDelegate({
     agent,
     brief: {
@@ -89,14 +112,17 @@ async function cmdDelegate(agent, task) {
     cwd: process.cwd(),
     taskId: argValue("--task-id") || null,
     mainAgent: "cli",
+    timeout,
+    resumeStep,
   });
 
   // Structured marker output — deterministic, parseable by skills/scripts.
   process.stdout.write(`[STATUS] ${result.status}\n`);
   process.stdout.write(`[AGENT] ${result.agent}\n`);
   if (result.task_id) {
-    const taskPath = join(homedir(), ".agentalk", "tasks", `${result.task_id}.json`);
+    const taskPath = join(homedir(), ".agentalk", "tasks", `${result.task_id}.jsonl`);
     process.stdout.write(`[TASK] ${taskPath}\n`);
+    process.stdout.write(`[TASK_ID] ${result.task_id}\n`);
   }
   if (result.step_id) {
     process.stdout.write(`[STEP] ${result.step_id}\n`);
@@ -232,6 +258,86 @@ function cmdRecall() {
     if (m.context) console.log(`      ${chalk.dim(m.context)}`);
   });
   console.log("");
+}
+
+// ─── tail — stream stdout/stderr events from a task's jsonl ────────
+// Two modes:
+//   tail <task-id>                     — print all stdout events and exit
+//   tail <task-id> --follow            — live tail; keep printing as new events append
+//   tail <task-id> --step s1           — filter to one step
+//   tail <task-id> --stream stderr     — show stderr instead of stdout
+async function cmdTail(taskId) {
+  const stepFilter = argValue("--step");
+  const stream = argValue("--stream") || "stdout";
+  const follow = argv.includes("--follow") || argv.includes("-f");
+  const taskFile = join(homedir(), ".agentalk", "tasks", `${taskId}.jsonl`);
+  if (!existsSync(taskFile)) {
+    console.error(`Task ${taskId} not found at ${taskFile}`);
+    process.exit(1);
+  }
+
+  // Print helper — filters events by type + step
+  const matchEvent = (e) => {
+    if (e.type !== stream) return false;
+    if (stepFilter && e.step_id !== stepFilter) return false;
+    return true;
+  };
+
+  // Initial dump of everything we have so far
+  let bytesRead = 0;
+  const events = readTaskEvents(taskId);
+  for (const e of events) {
+    if (matchEvent(e)) process.stdout.write(e.data || "");
+  }
+  bytesRead = statSync(taskFile).size;
+
+  if (!follow) return;
+
+  // Follow mode: poll file for appended content. Cheap (stat + read),
+  // survives arbitrary new events without any locking. 250ms is plenty
+  // for delegate-class latency.
+  const interval = setInterval(() => {
+    try {
+      const size = statSync(taskFile).size;
+      if (size <= bytesRead) {
+        // Check if the task has reached a terminal state; if so stop following
+        const folded = getTask(taskId);
+        if (folded && (folded.status === "done" || folded.status === "partial")) {
+          // Drain one final time then exit
+          const all = readFileSync(taskFile, "utf-8");
+          const slice = all.slice(bytesRead);
+          for (const line of slice.split("\n")) {
+            if (!line.trim()) continue;
+            try {
+              const e = JSON.parse(line);
+              if (matchEvent(e)) process.stdout.write(e.data || "");
+            } catch {}
+          }
+          clearInterval(interval);
+          process.exit(0);
+        }
+        return;
+      }
+      const all = readFileSync(taskFile, "utf-8");
+      const slice = all.slice(bytesRead);
+      for (const line of slice.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line);
+          if (matchEvent(e)) process.stdout.write(e.data || "");
+        } catch {}
+      }
+      bytesRead = size;
+    } catch {
+      // file disappeared or stat failed — give up quietly
+      clearInterval(interval);
+      process.exit(0);
+    }
+  }, 250);
+
+  process.on("SIGINT", () => { clearInterval(interval); process.exit(0); });
+  // Prevent the function from returning — the interval keeps process alive.
+  await new Promise(() => {});
 }
 
 function cmdTaskStatus(id) {
@@ -422,6 +528,16 @@ if (first === "quotas")       { cmdQuotas();                          process.ex
 if (first === "capabilities") { cmdCapabilities();                    process.exit(0); }
 if (first === "init")         { await cmdInit();                      process.exit(0); }
 if (first === "review")       { cmdReview();                          process.exit(0); }
+
+if (first === "tail") {
+  const id = argv[1];
+  if (!id || id.startsWith("--")) {
+    console.error("Usage: agentalk-delegate tail <task-id> [--step s1] [--stream stdout|stderr] [--follow]");
+    process.exit(2);
+  }
+  await cmdTail(id);
+  process.exit(0);
+}
 
 if (first === "recall") {
   cmdRecall();

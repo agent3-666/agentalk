@@ -272,13 +272,16 @@ agentalk-delegate <agent> "<task>" \
   --files "path1,path2" \
   --context "background" \
   --output "desired format" \
-  --budget "length hint"
+  --budget "length hint" \
+  --timeout 600                              # default 600s; bump for >10-file surveys
+  --resume-step <task-id>:<step-id>          # prepend prior stdout as context
 
 agentalk-delegate quotas           # observed quota state (real signals, not predicted)
-agentalk-delegate capabilities     # per-agent strengths + cost tier
+agentalk-delegate capabilities     # per-agent strengths + cost tier + priority/billing badges
 agentalk-delegate remember "fact"  # persist a project-level learning
 agentalk-delegate recall           # read back project memory
 agentalk-delegate task <id>        # inspect a delegation task
+agentalk-delegate tail <id>        # stream task stdout events ([--follow] for live)
 agentalk-delegate review           # per-agent performance from delegations.jsonl
 agentalk-delegate init             # setup status + next-step hints
 ```
@@ -298,17 +301,22 @@ Output is structured `[MARKER]` lines on stdout so skills/scripts parse determin
 
 **Architecture**: an external **supervisor** (deterministic code, ~500 LOC in `lib/supervisor.js`) owns task lifecycle state, observes quota signals, and executes delegations. The main model is the policy generator — it decides WHAT to delegate; the supervisor reliably executes and persists state. If the main model hits quota mid-task, task state lives in `~/.agentalk/tasks/{id}.json` so any model can resume.
 
-State layout:
+State layout (mirrors Claude Code's session storage pattern — one JSONL per task, event-stream format):
 ```
 ~/.agentalk/
-├── tasks/{id}.json       — full task lifecycle (plan, steps, checkpoints, results)
+├── tasks/{id}.jsonl      — event stream for one task: task_created, step_added,
+│                           stdout chunks, stderr chunks, step_completed.
+│                           Append-only. Current state derived by folding events.
+│                           One file per task (not per step).
 ├── quota.json            — observed quota state per agent
-├── capability.json       — capability profile per agent (editable)
+├── capability.json       — capability profile per agent (editable — priority/billing/note fields)
 └── delegations.jsonl     — append-only log of every delegation (for debug & learning)
 
 {cwd}/.agentalk/
 └── memory.jsonl          — project-level facts/decisions (append-only)
 ```
+
+**Why JSONL event stream instead of separate state/log files**: mirrors Claude Code's `~/.claude/projects/<key>/<session>.jsonl` pattern. Single source of truth, append is atomic per line (no torn-write risk), stdout/stderr chunks are first-class events that enable (1) live `tail --follow`, (2) automatic partial-output preservation on timeout, (3) `--resume-step` session continuity by replaying prior stdout as new-brief context.
 
 Example flow: user asks main agent to review an 80-page design doc. Main agent runs `agentalk-delegate quotas` → sees Gemini available. Runs `agentalk-delegate gemini "summarize 15 key decisions" --files ./doc.md`. Gemini reads the doc with its 2M context, CLI prints `[FINDINGS]`. Main agent synthesizes opinion without burning its own context on the raw document — and tells the user what happened: "I used Gemini to read the spec, saved ~40k tokens of my context."
 

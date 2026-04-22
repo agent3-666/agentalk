@@ -90,7 +90,8 @@ agentalk-delegate <agent> "<task>" \
   --files "path1,path2" \
   --context "2-3 lines of background the delegate needs" \
   --output "format or focus" \
-  --budget "length hint"
+  --budget "length hint" \
+  --timeout 600           # optional: override default (default is already 600s)
 ```
 
 **Concrete example**:
@@ -103,14 +104,22 @@ agentalk-delegate gemini "Extract the 10 core design decisions from this spec" \
   --budget "500 words"
 ```
 
+**Timeout guidance** (the main tripwire for heavy tasks):
+- Default is **600s** — enough for most multi-file surveys
+- For **> 10 files** or **long PDFs** → bump to `--timeout 1200`
+- For **> 20 files** → consider **splitting the task** into two delegations instead (one long delegation is fragile; two short ones are observable and resumable)
+
+**If a delegation times out, you get `[STATUS] timeout_partial` + whatever was produced before the deadline** — the system streams stdout into the task log in real time, so nothing is lost. Treat partial output as potentially usable (first N out of M items); decide whether to accept, retry, or split.
+
 ### 3. Parse output
 
 The CLI prints structured markers on stdout:
 
 ```
-[STATUS] ok
+[STATUS] ok                    # or: timeout_partial / quota_exceeded / auth_failed / failed / system_error
 [AGENT] gemini
-[TASK] /Users/.../.agentalk/tasks/t_xxx.json
+[TASK] /Users/.../.agentalk/tasks/t_xxx.jsonl
+[TASK_ID] t_xxx
 [TOKENS] 749 (est)
 [ELAPSED_MS] 38474
 [FINDINGS]
@@ -122,21 +131,53 @@ The CLI prints structured markers on stdout:
 [END_UNKNOWNS]
 ```
 
-Parse by reading between `[FINDINGS]` and `[END_FINDINGS]`. For full detail (including the brief and per-step timing) read the `[TASK] <path>` file:
+Parse between `[FINDINGS]` / `[END_FINDINGS]`. For full detail use the `[TASK_ID]`:
 
 ```bash
-cat <path-from-TASK-line>
+agentalk-delegate task <task-id>           # structured summary
+agentalk-delegate tail <task-id>           # raw stdout the delegate produced
+agentalk-delegate tail <task-id> --follow  # live tail while still running (for long tasks)
 ```
+
+The `[TASK]` path points to a `.jsonl` — **one event per line** (task_created, step_added, step_started, stdout chunks, stderr chunks, step_completed). You can `cat` it or `jq` it for full transparency. One file per task, append-only — mirrors Claude Code's session storage.
 
 ### 4. Handle each status
 
 - `[STATUS] ok` → use `[FINDINGS]`, continue
+- `[STATUS] timeout_partial` → **partial output is real data**. Inspect `[FINDINGS]` — often usable (e.g. "got 6/9 files analyzed"). Either (a) accept what's there + do the rest yourself, (b) retry with `--timeout 1200` for the whole thing, or (c) use `--resume-step <task-id>:<step-id>` on a second delegation to continue from where the delegate left off
+- `[STATUS] timeout` (no partial) → delegate crashed before producing anything useful. Retry with larger `--timeout`, switch agent, or do it yourself
 - `[STATUS] quota_exceeded` → read `[DIAGNOSTICS]` for `suggestion` (alternative agent). Either retry with that agent, OR surface to user: "Gemini is rate-limited (resets in ~3h). I can use GLM via OpenCode instead, or we can pause."
 - `[STATUS] auth_failed` → surface to user: "This CLI isn't authenticated. Run `<cli> login` first."
-- `[STATUS] timeout` → decide: longer budget? different agent? ask user?
 - `[STATUS] failed` / `system_error` → read `detail`, reframe the task or fall back to doing it yourself
 
 **Never silently retry a failed delegation with a different agent**. Always either tell the user OR keep the same agent with a different brief. Silent fallback destroys trust.
+
+## Multi-step delegate chains (use --resume-step for continuity)
+
+When you need the same delegate to build on its own prior output, use `--resume-step`:
+
+```bash
+# Step 1: Gemini surveys the codebase
+agentalk-delegate gemini "List all exported functions in src/*.ts" \
+  --files "src/a.ts,src/b.ts,src/c.ts" \
+  --output "One line per function: name, file, signature"
+# → [TASK_ID] t_abc
+
+# Step 2: Gemini reasons further using its own Step 1 output, no re-briefing needed
+agentalk-delegate gemini "Of those functions, which touch the auth flow?" \
+  --resume-step t_abc:s1 \
+  --output "Numbered list with short justification"
+```
+
+Under the hood: the prior step's stdout is read from the jsonl and prepended to the new brief as "Your prior output". Works for any CLI that takes a prompt — we don't depend on each CLI's native session feature.
+
+**When to use `--resume-step`**:
+- Multi-step reasoning where the delegate benefits from seeing its own prior work verbatim (not your summary of it)
+- Continuing a `timeout_partial` delegation from where it stopped
+
+**When NOT to use it**:
+- Different task types — use fresh delegate with fresh brief instead
+- You want a clean slate (sometimes priors bias the delegate)
 
 ---
 
@@ -162,25 +203,30 @@ The principle: if the user can't see that delegation happened, they have no reas
 
 ---
 
-## Multi-step tasks
+## Multi-step tasks (different agents sharing a task_id)
 
-Share a task_id across delegations when they logically belong together:
+When sub-tasks logically belong to one "piece of work" across agents, share the `task_id`:
 
 ```bash
-# Step 1
+# Step 1: Gemini reads (its context window is what we came for)
 agentalk-delegate gemini "Extract decisions from ./spec.md" --files "./spec.md"
-# note [TASK] line — extract task_id from path: t_20260422nnnnnn_xxxxxx
+# → [TASK_ID] t_abc
 
-# Step 2 (reuses task state)
+# Step 2: OpenCode translates (different agent, same task)
 agentalk-delegate opencode "Translate previous step's findings to Chinese" \
-  --task-id t_20260422nnnnnn_xxxxxx \
+  --task-id t_abc \
   --context "Step 1 produced a decision list; translate preserving numbering."
 ```
+
+Difference between `--task-id` and `--resume-step`:
+- `--task-id` — **organizational**: same "piece of work" gets one task file holding all steps
+- `--resume-step` — **contextual**: prepend prior stdout into the new brief (can combine with or be independent of `--task-id`)
 
 Review the full task at any time:
 
 ```bash
-agentalk-delegate task t_20260422nnnnnn_xxxxxx
+agentalk-delegate task <task-id>     # summary
+agentalk-delegate tail <task-id>     # all stdout produced across all steps
 ```
 
 ---
@@ -223,12 +269,23 @@ If missing: `npm install -g agentalk`.
 |---------|---------|
 | `agentalk-delegate <agent> "<task>" [opts]` | Main operation |
 | `agentalk-delegate quotas` | Observed quota state (real signals, not predicted) |
-| `agentalk-delegate capabilities` | What each agent is good at |
-| `agentalk-delegate task <id>` | Inspect a delegation task |
+| `agentalk-delegate capabilities` | What each agent is good at + priority/billing badges |
+| `agentalk-delegate task <id>` | Inspect a delegation task (status + steps) |
+| `agentalk-delegate tail <id> [--follow]` | Stream a task's stdout events (live or historical) |
 | `agentalk-delegate remember "<fact>"` | Persist a project-level learning |
 | `agentalk-delegate recall` | Read project memory |
 | `agentalk-delegate review` | Per-agent success rates (after some usage) |
 | `agentalk-delegate init` | Setup status + next-step hints |
 | `agentalk-delegate help` | Full usage |
 
+Key flags on the primary delegate command:
+- `--timeout <sec>` — override default 600s (use 1200 for >10-file tasks)
+- `--resume-step <task-id>:<step-id>` — prepend prior step's stdout as context (continues delegate's own prior work)
+- `--task-id <id>` — organize a multi-step task under one ID
+- `--files a,b,c` / `--context` / `--output` / `--budget` — brief-in fields
+
 All commands accept `--json` where structured output is useful for scripting.
+
+## Storage model (if you're debugging or curious)
+
+Each delegation task gets **one jsonl file** at `~/.agentalk/tasks/<task-id>.jsonl`, mirroring Claude Code's session storage pattern. Each line is an event: `task_created`, `step_added`, `step_started`, `stdout`, `stderr`, `step_completed`. Current state is derived by folding events, not stored separately. Partial output on timeout is automatically preserved because stdout is streamed into the log as it arrives.
