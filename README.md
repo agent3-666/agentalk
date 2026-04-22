@@ -1,11 +1,21 @@
 # AgentTalk
 
-Two complementary tools for multi-CLI AI collaboration:
+**Get more out of the AI subscriptions you already pay for.**
 
-- **`agentalk`** — run Claude Code, Codex CLI, Gemini CLI, OpenCode and more as a collaborative panel with shared context, six discussion modes, a moderator, and token tracking
-- **`agentalk-delegate`** — separate binary for Skill+CLI sub-task delegation: a main AI agent hands off a single sub-task to another CLI based on capability + observed quota, with structured brief-in/brief-out and persistent task state
+If you're on Claude Max + Gemini Plus + ChatGPT Pro + GLM Pro (or any mix), you usually have one main agent doing most of the work while the others sit idle — Codex at 100% this week, Gemini with headroom under its hidden rate limits, GLM barely touched. AgentTalk offers two patterns for putting that slack to work:
 
-The two work independently. Use `agentalk` when you want **multiple agents to talk to each other**; use `agentalk-delegate` when you want your **main agent to quietly route a sub-task** to a specialist CLI.
+### 🏛️ Committee — `agentalk`
+Gather Claude, Codex, Gemini, OpenCode into a shared panel. Pick a mode: discuss in parallel rounds, debate in turns, panel-first-then-debate, brainstorm for divergence, challenge adversarially, deepen root causes. For **decisions that benefit from multiple expert perspectives** — architecture, stress-testing proposals, root-cause analysis — you're not stuck asking one model. The room debates, a moderator converges, you read the transcript.
+
+### 🤝 Colleague — `agentalk-delegate`
+Let your main AI agent (typically Claude Code) quietly hand off a sub-task to another CLI — reading a 60-page spec, translating bulk text, generating a shell script, scanning a big codebase. The main agent decides WHAT and WHO; a deterministic supervisor executes, observes quota signals, returns structured findings. **Spreads load across all your subscriptions**, preserves main-model context budget, and the main agent reports back to you transparently ("Used Gemini to read the spec, saved ~40k tokens of context").
+
+The two are independent binaries and can be used separately:
+
+| Pattern | Binary | Metaphor | Best when |
+|---------|--------|----------|-----------|
+| Committee | `agentalk` | Multiple experts in a room | High-stakes decision with real trade-offs |
+| Colleague | `agentalk-delegate` | Handing off a well-scoped task | Routine sub-task a specialist does better (or cheaper) |
 
 ## Features
 
