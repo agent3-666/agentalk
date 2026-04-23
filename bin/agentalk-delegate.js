@@ -17,7 +17,7 @@
 //   agentalk-delegate help
 
 import { readFileSync, existsSync, statSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, isAbsolute } from "path";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
@@ -152,6 +152,55 @@ async function cmdDelegate(agent, task) {
     if (d.suggestion) process.stdout.write(`suggestion: ${d.suggestion}\n`);
     process.stdout.write(`[END_DIAGNOSTICS]\n`);
   }
+
+  // ─── Value report (Layer 4: make delegation visible) ─────────────
+  // The skill REQUIRES the main agent to quote this to the user after
+  // every delegation. We compute the numbers here so Claude doesn't
+  // have to estimate — it just reads and paraphrases.
+  if (result.status === "ok" || result.status === "timeout_partial") {
+    const agentDef = AGENTS[agent];
+    const modelName = agentDef?.model || agentDef?.displayName?.match(/\((.+)\)/)?.[1] || "unknown";
+    const displayName = agentDef?.displayName || agent;
+    const delegateTokens = result.diagnostics?.tokens?.total || 0;
+
+    // Estimate context saved: size of files the delegate read minus
+    // size of findings it returned. If no files, we can't quantify
+    // — still report delegate-tokens so user sees what it cost.
+    let savedTokens = null;
+    try {
+      const filesRaw = argValue("--files");
+      const files = filesRaw ? filesRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
+      if (files.length) {
+        let bytesRead = 0;
+        for (const f of files) {
+          try {
+            const full = isAbsolute(f) ? f : join(process.cwd(), f);
+            bytesRead += statSync(full).size;
+          } catch {}
+        }
+        const findingsBytes = Buffer.byteLength(result.findings || "");
+        // Rough chars-to-tokens ratio; errs on the low side.
+        savedTokens = Math.max(0, Math.round((bytesRead - findingsBytes) / 3.5));
+      }
+    } catch { /* non-fatal */ }
+
+    process.stdout.write(`[VALUE_REPORT]\n`);
+    process.stdout.write(`agent: ${agent}\n`);
+    process.stdout.write(`model: ${modelName}\n`);
+    process.stdout.write(`display: ${displayName}\n`);
+    process.stdout.write(`delegate_tokens: ${delegateTokens}\n`);
+    if (savedTokens !== null) {
+      process.stdout.write(`main_context_saved: ~${savedTokens.toLocaleString()} tokens\n`);
+    } else {
+      process.stdout.write(`main_context_saved: (no --files given — can't estimate; delegate spent ${delegateTokens} tokens on your behalf)\n`);
+    }
+    process.stdout.write(`task_summary: ${task.slice(0, 150)}${task.length > 150 ? "…" : ""}\n`);
+    if (result.status === "timeout_partial") {
+      process.stdout.write(`note: partial output recovered — see findings for what was captured before timeout\n`);
+    }
+    process.stdout.write(`[END_VALUE_REPORT]\n`);
+  }
+
   process.exit(result.status === "ok" ? 0 : 1);
 }
 

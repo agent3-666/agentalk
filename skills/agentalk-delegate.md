@@ -183,25 +183,51 @@ Under the hood: the prior step's stdout is read from the jsonl and prepended to 
 
 ---
 
-## Visible value (Layer 4) — REQUIRED
+## Visible value (Layer 4) — REQUIRED, MECHANICAL
 
-Every time you delegate, **explicitly tell the user** what happened, in your reply to them. Not a postscript — part of the narrative.
+Every successful (or partial) delegation prints a `[VALUE_REPORT]` block to stdout — you **MUST** surface this to the user in your reply. Not a postscript — part of the narrative.
 
-✅ **Good**:
-> "I had Gemini read the 60-page spec (its 2M context handles the full doc in one pass — saved me about 40k tokens of working context). Here's the summary: ..."
+Example CLI output:
 
-✅ **Good (failure case)**:
-> "I tried to delegate this to Gemini but it's currently rate-limited (resets in ~2h). I handled the read myself instead — here are the findings: ..."
+```
+[VALUE_REPORT]
+agent: gemini
+model: gemini-2.5-pro
+display: Gemini (gemini-2.5-pro)
+delegate_tokens: 749
+main_context_saved: ~12,450 tokens
+task_summary: Extract 10 core design decisions from spec.md
+[END_VALUE_REPORT]
+```
+
+Turn this into a **one-line visible-value statement** in your user-facing reply. Required format — pick one of these phrasings (or equivalent):
+
+- `✓ Used **Gemini (gemini-2.5-pro)** to extract design decisions — saved ~12k tokens of my context.`
+- `✓ Delegated spec reading to **Gemini (gemini-2.5-pro)** (~12k main-context tokens saved).`
+- `✓ Handed off to **OpenCode (GLM)** for the translation — used ~300 tokens of GLM quota, zero of mine.`
+
+Include **agent display name + model + what was accomplished + tokens saved**. One line, in natural English/Chinese, mixed into your reply where relevant (usually right before presenting the findings or right at the top of your response).
+
+✅ **Good** (embeds the value report in narrative):
+> "I had **Gemini (gemini-2.5-pro)** read the 60-page spec — saved ~40k tokens of my working context. Here's what it found: ..."
+
+✅ **Good, failure case** (still visible, still honest):
+> "I tried **Gemini**, it's rate-limited right now. I read the spec myself — here are the findings: ..."
+
+✅ **Good, partial case**:
+> "**Gemini (gemini-2.5-pro)** got through 6 of 9 files before timing out (~8k tokens worth of context saved on those 6). I'll do the remaining 3 myself."
 
 ❌ **Bad (silent)**:
 > "Here's the summary: ..."  
-> *(user has no idea Gemini did the heavy lifting; no reinforcement for delegation habit next time)*
+> *(no mention of Gemini, no tokens; user has no reason to keep paying for Gemini Plus)*
 
 ❌ **Bad (technical noise)**:
 > "Invoked agentalk-delegate gemini with --files, got findings..."  
-> *(user doesn't care about the mechanics; show the value instead)*
+> *(user doesn't care about the mechanics; show the value)*
 
-The principle: if the user can't see that delegation happened, they have no reason to keep this setup.
+**Rule**: if `[VALUE_REPORT]` was printed, there MUST be a line in your user-facing reply naming the agent, the model, what was accomplished, and (when `main_context_saved` is given) the tokens saved. If the CLI says `(no --files given — can't estimate)`, state the delegate_tokens instead (e.g. "Gemini spent ~750 tokens on this so I didn't have to").
+
+The principle: **the user paid for that subscription; show them it's working for them.**
 
 ---
 
