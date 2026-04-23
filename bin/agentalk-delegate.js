@@ -58,6 +58,7 @@ ${chalk.bold("Primary: delegate a task")}
     --timeout <sec>              override default timeout (default: 600s for delegations)
     --task-id <id>               reuse an existing task (multi-step)
     --resume-step <tid>:<sid>    prepend that step's stdout as prior context (continues delegate's prior work)
+    --no-value-report            suppress the [VALUE_REPORT] block (default: on — lets main agent tell you what was delegated and tokens saved)
 
 ${chalk.bold("Helpers")}
   ${chalk.cyan("agentalk-delegate quotas")}              observed quota state per agent (from real 429/rate-limit signals)
@@ -157,7 +158,11 @@ async function cmdDelegate(agent, task) {
   // The skill REQUIRES the main agent to quote this to the user after
   // every delegation. We compute the numbers here so Claude doesn't
   // have to estimate — it just reads and paraphrases.
-  if (result.status === "ok" || result.status === "timeout_partial") {
+  //
+  // Default: on. Callers who don't want it (shell scripts, piped
+  // programmatic consumers) can suppress with --no-value-report.
+  const suppressReport = argv.includes("--no-value-report");
+  if (!suppressReport && (result.status === "ok" || result.status === "timeout_partial")) {
     const agentDef = AGENTS[agent];
     const modelName = agentDef?.model || agentDef?.displayName?.match(/\((.+)\)/)?.[1] || "unknown";
     const displayName = agentDef?.displayName || agent;
