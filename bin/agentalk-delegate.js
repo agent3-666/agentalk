@@ -26,6 +26,7 @@ import { AGENTS } from "../lib/agents.js";
 import { listAgents } from "../lib/config.js";
 import {
   delegate as supervisorDelegate,
+  delegateSession as supervisorDelegateSession,
   readQuotaState,
   readCapabilities,
   rememberFact,
@@ -33,6 +34,10 @@ import {
   getTask,
   readTaskEvents,
   readTaskOutput,
+  readSessions,
+  registerSession,
+  unregisterSession,
+  readInbox,
 } from "../lib/supervisor.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +64,13 @@ ${chalk.bold("Primary: delegate a task")}
     --task-id <id>               reuse an existing task (multi-step)
     --resume-step <tid>:<sid>    prepend that step's stdout as prior context (continues delegate's prior work)
     --no-value-report            suppress the [VALUE_REPORT] block (default: on — lets main agent tell you what was delegated and tokens saved)
+
+${chalk.bold("Session delegation (delegate to a specific Claude Code session with its accumulated context)")}
+  ${chalk.cyan("agentalk-delegate register-session <name> --cwd <path> [--session-id <id>]")}
+  ${chalk.cyan('agentalk-delegate @<name> "<task>" [options]')}   delegate to registered session
+  ${chalk.cyan("agentalk-delegate sessions")}           list registered sessions
+  ${chalk.cyan("agentalk-delegate unregister-session <name>")}
+  ${chalk.cyan("agentalk-delegate inbox [--cwd X]")}    what delegations has this session received?
 
 ${chalk.bold("Helpers")}
   ${chalk.cyan("agentalk-delegate quotas")}              observed quota state per agent (from real 429/rate-limit signals)
@@ -569,6 +581,173 @@ function cmdReview() {
   console.log("");
 }
 
+// ─── Session registry commands ─────────────────────────────────────
+function cmdRegisterSession(name) {
+  const cwd = argValue("--cwd");
+  const sessionId = argValue("--session-id") || null;
+  const agent = argValue("--agent") || "claude";
+  if (!cwd) {
+    console.error(`Usage: agentalk-delegate register-session <name> --cwd <path> [--session-id <id>] [--agent claude]`);
+    process.exit(2);
+  }
+  try {
+    const rec = registerSession(name, { cwd, sessionId, agent });
+    console.log(chalk.green(`✓ Registered session '${name}'`));
+    console.log(`  ${chalk.dim("cwd:       ")} ${rec.cwd}`);
+    console.log(`  ${chalk.dim("session_id:")} ${rec.session_id || chalk.dim("(latest in cwd via -c)")}`);
+    console.log(`  ${chalk.dim("agent:     ")} ${rec.agent}`);
+    console.log("");
+    console.log(chalk.dim("Try:"));
+    console.log(`  ${chalk.cyan(`agentalk-delegate @${name} "<question>"`)}`);
+    console.log("");
+    console.log(chalk.dim(`Tip: append the following to ${cwd}/CLAUDE.md so that project's Claude Code knows it's registered as a delegation target:`));
+    console.log(chalk.dim(`  ---`));
+    console.log(chalk.dim(`  This project is registered with agentalk as session '${name}'.`));
+    console.log(chalk.dim(`  Other Claude Code sessions may delegate sub-tasks here via`));
+    console.log(chalk.dim(`  \`agentalk-delegate @${name} "..."\`. Delegations are non-persistent`));
+    console.log(chalk.dim(`  (won't pollute this session). Run \`agentalk-delegate inbox\` to see`));
+    console.log(chalk.dim(`  prior delegations received here.`));
+    console.log(chalk.dim(`  ---`));
+  } catch (err) {
+    console.error(chalk.red(`✗ ${err.message}`));
+    process.exit(1);
+  }
+}
+
+function cmdUnregisterSession(name) {
+  const ok = unregisterSession(name);
+  if (ok) console.log(chalk.green(`✓ Unregistered session '${name}'`));
+  else { console.error(chalk.red(`✗ Session '${name}' not found`)); process.exit(1); }
+}
+
+function cmdListSessions() {
+  const sessions = readSessions();
+  const names = Object.keys(sessions);
+  if (flagJson) {
+    process.stdout.write(JSON.stringify(sessions, null, 2) + "\n");
+    return;
+  }
+  if (names.length === 0) {
+    console.log(chalk.dim("(no sessions registered — use `agentalk-delegate register-session <name> --cwd <path>`)"));
+    return;
+  }
+  console.log(chalk.bold(`\nRegistered sessions (${names.length}):\n`));
+  for (const name of names) {
+    const s = sessions[name];
+    const cwdExists = existsSync(s.cwd);
+    const mark = cwdExists ? chalk.green("✓") : chalk.red("✗");
+    console.log(`  ${mark} ${chalk.bold("@" + name)} ${chalk.dim("(" + s.agent + ")")}`);
+    console.log(`    ${chalk.dim("cwd:       ")} ${s.cwd}${cwdExists ? "" : chalk.red(" [missing]")}`);
+    console.log(`    ${chalk.dim("session_id:")} ${s.session_id || chalk.dim("(latest via -c)")}`);
+    console.log(`    ${chalk.dim("registered:")} ${s.registered_at}`);
+  }
+  console.log("");
+}
+
+function cmdInbox() {
+  const cwd = argValue("--cwd") || process.cwd();
+  const limit = parseInt(argValue("--limit") || "20", 10);
+  const inbox = readInbox(cwd, { limit });
+  if (flagJson) {
+    process.stdout.write(JSON.stringify(inbox, null, 2) + "\n");
+    return;
+  }
+  if (inbox.length === 0) {
+    console.log(chalk.dim(`(no delegation inbox at ${cwd}/.agentalk/inbox.jsonl)`));
+    console.log(chalk.dim("This means no one has delegated to a registered session rooted here."));
+    return;
+  }
+  console.log(chalk.bold(`\n${inbox.length} delegation(s) received at ${cwd}:\n`));
+  inbox.forEach((r, i) => {
+    const date = r.ts.slice(0, 19).replace("T", " ");
+    console.log(`  ${chalk.dim((i + 1).toString().padStart(2) + ".")} [${chalk.cyan(date)}] from ${chalk.bold(r.from_caller || "?")} → ${chalk.dim(`@${r.session_name}`)}`);
+    console.log(`      ${chalk.bold("ask:")}     ${r.task_summary}`);
+    if (r.findings_preview) {
+      console.log(`      ${chalk.bold("preview:")} ${chalk.dim(r.findings_preview.slice(0, 200))}`);
+    }
+    console.log(`      ${chalk.dim(`outcome: ${r.outcome} · task_id: ${r.task_id}`)}`);
+  });
+  console.log("");
+  console.log(chalk.dim(`Full trail of any entry: agentalk-delegate tail <task_id>`));
+  console.log("");
+}
+
+// ─── Session-target delegate (@name) ───────────────────────────────
+async function cmdDelegateSession(name, task) {
+  const timeoutStr = argValue("--timeout");
+  const timeout = timeoutStr ? parseInt(timeoutStr, 10) : null;
+  if (timeoutStr && (isNaN(timeout) || timeout <= 0)) {
+    console.error(`Invalid --timeout value: ${timeoutStr}`);
+    process.exit(2);
+  }
+  const filesRaw = argValue("--files");
+  const files = filesRaw ? filesRaw.split(",").map(s => s.trim()).filter(Boolean) : undefined;
+
+  const result = await supervisorDelegateSession({
+    sessionName: name,
+    brief: {
+      task,
+      files,
+      context: argValue("--context") || undefined,
+      output: argValue("--output") || undefined,
+      budget: argValue("--budget") || undefined,
+    },
+    taskId: argValue("--task-id") || null,
+    mainAgent: "cli",
+    timeout,
+  });
+
+  // Same marker shape as regular delegate so skills parse uniformly.
+  process.stdout.write(`[STATUS] ${result.status}\n`);
+  process.stdout.write(`[AGENT] ${result.agent}\n`);
+  process.stdout.write(`[SESSION_CWD] ${result.session_cwd || "?"}\n`);
+  if (result.task_id) {
+    const taskPath = join(homedir(), ".agentalk", "tasks", `${result.task_id}.jsonl`);
+    process.stdout.write(`[TASK] ${taskPath}\n`);
+    process.stdout.write(`[TASK_ID] ${result.task_id}\n`);
+  }
+  if (result.step_id) process.stdout.write(`[STEP] ${result.step_id}\n`);
+  if (result.diagnostics?.tokens?.total != null) {
+    const t = result.diagnostics.tokens;
+    process.stdout.write(`[TOKENS] ${t.total}${t.estimated ? " (est)" : ""}\n`);
+  }
+  if (result.diagnostics?.elapsed_ms != null) {
+    process.stdout.write(`[ELAPSED_MS] ${result.diagnostics.elapsed_ms}\n`);
+  }
+  if (result.findings) {
+    process.stdout.write(`[FINDINGS]\n${result.findings}\n[END_FINDINGS]\n`);
+  }
+  if (result.unknowns?.length) {
+    process.stdout.write(`[UNKNOWNS]\n${result.unknowns.map(u => "- " + u).join("\n")}\n[END_UNKNOWNS]\n`);
+  }
+  if (result.status !== "ok" && result.status !== "timeout_partial") {
+    const d = result.diagnostics || {};
+    process.stdout.write(`[DIAGNOSTICS]\n`);
+    if (d.outcome)    process.stdout.write(`outcome: ${d.outcome}\n`);
+    if (d.detail)     process.stdout.write(`detail: ${d.detail}\n`);
+    process.stdout.write(`[END_DIAGNOSTICS]\n`);
+  }
+
+  // Value report (Layer 4)
+  const suppressReport = argv.includes("--no-value-report");
+  if (!suppressReport && (result.status === "ok" || result.status === "timeout_partial")) {
+    process.stdout.write(`[VALUE_REPORT]\n`);
+    process.stdout.write(`session: @${result.session_name}\n`);
+    process.stdout.write(`session_cwd: ${result.session_cwd}\n`);
+    process.stdout.write(`delegate_tokens: ${result.diagnostics?.tokens?.total || 0}\n`);
+    process.stdout.write(`task_summary: ${task.slice(0, 150)}${task.length > 150 ? "…" : ""}\n`);
+    if (result.inbox_path) {
+      process.stdout.write(`inbox_logged_to: ${result.inbox_path}\n`);
+    }
+    if (result.status === "timeout_partial") {
+      process.stdout.write(`note: partial output recovered\n`);
+    }
+    process.stdout.write(`[END_VALUE_REPORT]\n`);
+  }
+
+  process.exit(result.status === "ok" || result.status === "timeout_partial" ? 0 : 1);
+}
+
 // ─── Dispatch ──────────────────────────────────────────────────────
 const first = argv[0];
 
@@ -582,6 +761,28 @@ if (first === "quotas")       { cmdQuotas();                          process.ex
 if (first === "capabilities") { cmdCapabilities();                    process.exit(0); }
 if (first === "init")         { await cmdInit();                      process.exit(0); }
 if (first === "review")       { cmdReview();                          process.exit(0); }
+if (first === "sessions")     { cmdListSessions();                    process.exit(0); }
+if (first === "inbox")        { cmdInbox();                           process.exit(0); }
+
+if (first === "register-session") {
+  const name = argv[1];
+  if (!name || name.startsWith("--")) {
+    console.error("Usage: agentalk-delegate register-session <name> --cwd <path> [--session-id <id>]");
+    process.exit(2);
+  }
+  cmdRegisterSession(name);
+  process.exit(0);
+}
+
+if (first === "unregister-session") {
+  const name = argv[1];
+  if (!name || name.startsWith("--")) {
+    console.error("Usage: agentalk-delegate unregister-session <name>");
+    process.exit(2);
+  }
+  cmdUnregisterSession(name);
+  process.exit(0);
+}
 
 if (first === "tail") {
   const id = argv[1];
@@ -616,6 +817,22 @@ if (first === "task") {
   }
   cmdTaskStatus(id);
   process.exit(0);
+}
+
+// @session target: delegate to a registered session
+if (first?.startsWith("@")) {
+  const sessionName = first.slice(1);
+  if (!sessionName) {
+    console.error("Usage: agentalk-delegate @<session-name> \"<task>\" [options]");
+    process.exit(2);
+  }
+  const task = argv[1];
+  if (!task || task.startsWith("--")) {
+    console.error(`Usage: agentalk-delegate @${sessionName} "<task description>" [options]`);
+    process.exit(2);
+  }
+  await cmdDelegateSession(sessionName, task);
+  // cmdDelegateSession exits itself
 }
 
 // Primary: <agent> "<task>" [options]

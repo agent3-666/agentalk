@@ -291,11 +291,40 @@ If missing: `npm install -g agentalk`.
 
 ---
 
+## Session-targeted delegation (`@<name>`)
+
+Beyond delegating to agent types (`gemini`, `codex`, ...) you can delegate to a **specific Claude Code session** that has its own accumulated context. Example use case: you're in project A and need to know what was decided in an ongoing project B session. Instead of re-briefing from scratch, ask B's session directly.
+
+Setup (once per session you want addressable):
+```bash
+agentalk-delegate register-session sumplus --cwd /path/to/Sumplus
+# optionally --session-id <id> for a specific session; default: latest in cwd
+```
+
+Then delegate:
+```bash
+agentalk-delegate @sumplus "What was the auth token storage decision?"
+agentalk-delegate @sumplus "Review this diff" --files ./patch.diff
+```
+
+Under the hood spawns `claude --resume <id> -p "..." --no-session-persistence` in the session's cwd — the delegate sees that session's full conversation history, but the question + answer are NOT written to the live session's JSONL (won't surprise you later).
+
+**Both sides are transparent about this**:
+- **You (caller)**: `[VALUE_REPORT]` includes `inbox_logged_to: /path/.agentalk/inbox.jsonl` — mention it in your user-facing line.
+- **The delegated session** (when it's next used by you or others): can run `agentalk-delegate inbox` in its cwd to see `{ ts, from_caller, task_summary, findings_preview, task_id }` for every delegation it's received. Nothing is hidden.
+
+So the honest user-facing sentence for session delegations looks like:
+> `✓ Queried the **Sumplus Claude session** for the auth decision — the result is also recorded in that project's `.agentalk/inbox.jsonl` so future sessions there know this was asked.`
+
 ## Quick reference
 
 | Command | Purpose |
 |---------|---------|
-| `agentalk-delegate <agent> "<task>" [opts]` | Main operation |
+| `agentalk-delegate <agent> "<task>" [opts]` | Delegate to an agent type (fresh CLI spawn) |
+| `agentalk-delegate @<name> "<task>" [opts]` | Delegate to a registered session (resumes that session's context, non-persistent) |
+| `agentalk-delegate register-session <name> --cwd <path>` | Register a session as an addressable target |
+| `agentalk-delegate sessions` | List registered sessions |
+| `agentalk-delegate inbox [--cwd X]` | See what delegations a session has received |
 | `agentalk-delegate quotas` | Observed quota state (real signals, not predicted) |
 | `agentalk-delegate capabilities` | What each agent is good at + priority/billing badges |
 | `agentalk-delegate task <id>` | Inspect a delegation task (status + steps) |
