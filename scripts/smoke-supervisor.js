@@ -64,6 +64,19 @@ ok("ok when success",
 ok("reset hint extracted",
   parseQuotaSignal({ error: "429, resets in 3 hours" }).reset_hint?.includes("resets"));
 
+// Regression: response content that quotes code/text must NOT trigger
+// quota/auth signals. Earlier the blob included response, so reviewing a
+// file containing "401" as a line number or the word "unauthorized" in a
+// function name falsely marked the agent as auth_failed.
+ok("response with '401' line-number not flagged",
+  parseQuotaSignal({ response: "see ref-group.tsx:401: border-primary", error: "" }).outcome === "ok");
+ok("response mentioning 'unauthorized' function not flagged",
+  parseQuotaSignal({ response: "calls unauthorizedResponse() when userId is null", error: "" }).outcome === "ok");
+ok("response mentioning 'rate limit' as prose not flagged",
+  parseQuotaSignal({ response: "the endpoint applies a rate limit of 60/min", error: "" }).outcome === "ok");
+ok("codex invalid_request_error → bad_request",
+  parseQuotaSignal({ error: 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error"}}', response: "" }).outcome === "bad_request");
+
 // ─── Quota state persistence ─────────────────────────────────────
 console.log("\nQuota state:");
 updateQuotaState("gemini", { outcome: "quota_exceeded", detail: "test", reset_hint: null });
