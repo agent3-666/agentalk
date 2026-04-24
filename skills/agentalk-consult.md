@@ -58,13 +58,16 @@ agentalk --discuss "your topic" --verbose
 
 ### Output format
 
-The CLI prints the convergence conclusion to stdout:
+The CLI prints two lines to stdout:
 
 ```
 [CONCLUSION] <conclusion text>
+[SUMMARY] /path/to/summary.md
 ```
 
-or Chinese variants:
+The `[SUMMARY]` path points to a full transcript markdown file with each agent's responses, the conclusion, and token usage. **Always read this file** — the one-line conclusion is a headline; the transcript is the real value.
+
+Chinese variants for the conclusion line:
 ```
 [讨论结论] <conclusion text>
 [辩论结论] <conclusion text>
@@ -111,13 +114,17 @@ Include:
 
 ## After getting the conclusion
 
-Tell the user:
-1. That you consulted the panel (and briefly why — "this had real trade-offs between X and Y")
-2. The conclusion in 1–3 sentences
-3. How you're applying it
+1. Parse the `[SUMMARY] <path>` line from stdout
+2. Read the full transcript: `cat <path>`
+3. Tell the user:
+   - That you consulted the panel (briefly why — "this had real trade-offs between X and Y")
+   - The key insights from the discussion — not just the conclusion, but the *reasoning* and *disagreements* that led there
+   - How you're applying it
 
 Example:
-> "I consulted the AgentTalk panel on the rate limiting approach. Consensus: start with in-process token bucket, add a Redis flag from day one so migration is a config change not a rewrite. Applying that now..."
+> "I consulted the AgentTalk panel on rate limiting. The panel split initially — Codex pushed for in-process (zero deps, ships today), Gemini argued for Redis from day one (correctness under scale). Convergence: in-process token bucket with a Redis flag wired from day one so migration is config not rewrite. Applying that now..."
+
+Reading the transcript matters: agents often surface constraints or edge cases in their reasoning that don't make it into the final conclusion.
 
 ---
 

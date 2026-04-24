@@ -6,7 +6,8 @@
   "bin": {
     "agentalk": "./index.js",
     "agentalk-mcp": "./mcp-server.js",
-    "agentalk-model": "./bin/agentalk-model.js"
+    "agentalk-model": "./bin/agentalk-model.js",
+    "agentalk-delegate": "./bin/agentalk-delegate.js"
   },
   "scripts": {
     "start": "node index.js",

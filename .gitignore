@@ -1,2 +1,7 @@
 node_modules/
 .DS_Store
+
+# Local agentalk runtime state — never commit:
+#   · project-level discussion summaries, memory.jsonl, artifacts
+#   · user's ~/.agentalk/ lives outside the repo but is listed here for clarity
+.agentalk/

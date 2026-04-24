@@ -167,8 +167,12 @@ if (headlessMode && headlessTopic) {
   else if (headlessMode === "challenge")  lines = await challenge (headlessTopic, ctx, { capture: !flagVerbose });
   else if (headlessMode === "deepen")     lines = await deepen    (headlessTopic, ctx, { capture: !flagVerbose });
   else                                    lines = await debate    (headlessTopic, ctx, { capture: !flagVerbose });
+
+  // Always persist a full transcript — programmatic consumers (skills, MCP) read it
+  const { global: summaryPath } = saveSummary(ctx, headlessTopic, Object.keys(AGENTS), { localDir: process.cwd() });
+
   if (!flagVerbose) {
-    // Print captured output then extract conclusion for clean stdout
+    // Print the conclusion for simple piped usage
     const conclusion = ctx.messages.findLast(
       m => m.role === "system" && /^\[(辩论结论|讨论结论|CONCLUSION|DEBATE_CONCLUSION)\]/.test(m.content)
     );
@@ -177,6 +181,8 @@ if (headlessMode && headlessTopic) {
     } else if (lines?.length) {
       process.stdout.write(lines.join("\n") + "\n");
     }
+    // Append summary path so callers can read the full transcript
+    if (summaryPath) process.stdout.write(`[SUMMARY] ${summaryPath}\n`);
   }
   process.exit(0);
 }
