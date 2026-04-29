@@ -352,8 +352,18 @@ async function cmdTail(taskId) {
   // Initial dump of everything we have so far
   let bytesRead = 0;
   const events = readTaskEvents(taskId);
+  let taskStartMs = Date.now();
+  let lastHeartbeatAgent = null;
+  let lastOutputMs = Date.now();
   for (const e of events) {
+    if (e.type === "task_created" && e.ts) taskStartMs = new Date(e.ts).getTime();
     if (matchEvent(e)) process.stdout.write(e.data || "");
+    if (e.type === "stdout" || e.type === "stderr") {
+      lastOutputMs = e.ts ? new Date(e.ts).getTime() : Date.now();
+      lastHeartbeatAgent = null;
+    } else if (e.type === "heartbeat") {
+      lastHeartbeatAgent = e.agent || lastHeartbeatAgent;
+    }
   }
   bytesRead = statSync(taskFile).size;
 
@@ -390,7 +400,16 @@ async function cmdTail(taskId) {
         if (!line.trim()) continue;
         try {
           const e = JSON.parse(line);
-          if (matchEvent(e)) process.stdout.write(e.data || "");
+          if (e.type === "stdout" || e.type === "stderr") {
+            lastOutputMs = e.ts ? new Date(e.ts).getTime() : Date.now();
+            lastHeartbeatAgent = null;
+            if (matchEvent(e)) process.stdout.write(e.data || "");
+          } else if (e.type === "heartbeat") {
+            if (lastHeartbeatAgent) {
+              process.stderr.write(chalk.dim(`♡ ${e.agent} working... (${Math.round((Date.now() - taskStartMs) / 1000)}s elapsed)\n`));
+            }
+            lastHeartbeatAgent = e.agent;
+          }
         } catch {}
       }
       bytesRead = size;
@@ -431,6 +450,20 @@ function cmdTaskStatus(id) {
       : chalk.dim;
     console.log(`    ${s.id} ${statusColor("[" + s.status + "]".padEnd(10))} ${s.agent.padEnd(12)} ${ms.padStart(8)}  ~${tok}t`);
     if (s.brief?.task) console.log(`        ${chalk.dim(s.brief.task.slice(0, 100))}`);
+  }
+  if (task.status === "running") {
+    const events = readTaskEvents(id);
+    let latestActivity = null;
+    for (const e of events) {
+      if (e.type !== "stdout" && e.type !== "stderr" && e.type !== "heartbeat") continue;
+      if (!latestActivity || e.ts > latestActivity.ts) latestActivity = e;
+    }
+    if (latestActivity) {
+      const secsAgo = Math.max(0, Math.round((Date.now() - new Date(latestActivity.ts).getTime()) / 1000));
+      console.log(`  ${chalk.dim("last activity:")} ${secsAgo}s ago (${latestActivity.type})`);
+    } else {
+      console.log(chalk.dim("  (no activity events yet)"));
+    }
   }
   console.log("");
 }

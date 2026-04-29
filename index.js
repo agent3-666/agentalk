@@ -95,15 +95,38 @@ if (flagContinue) {
 }
 
 // ─── Banner ─────────────────────────────────────────────────────────
-// Compact startup banner: 6 lines. Enough to start using the tool.
-// Full help lives in printFullHelp() (triggered by /help or -h).
 function printBanner() {
-  const activeNames = Object.values(AGENTS).map(a => a.displayName).join(" · ");
-  console.log(chalk.bold(`\n ${t("banner.title", { agents: activeNames })}\n`));
-  console.log(chalk.dim(`  ${t("banner.quick_msg")}`));
-  console.log(chalk.dim(`  ${t("banner.quick_cmds")}`));
-  console.log(chalk.dim(`  ${t("banner.quick_stop")}`));
-  console.log(chalk.dim(`  ${t("banner.quick_help")}\n`));
+  const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+  const agents = Object.values(AGENTS);
+  const cwd = process.cwd().replace(homedir(), "~");
+  const g = chalk.hex("#F59E0B").bold; // gold accent
+
+  // 4-line "AT" pixel art logo
+  const logoLines = [
+    g("  ▄███▄   █████  "),
+    g(" ▐█▌ ▐█▌   ▐█▌   "),
+    g(" ▐█████▌   ▐█▌   "),
+    g("▐█▌   ▐█▌  ▐█▌   "),
+  ];
+
+  // Info column: title, agents row 1, agents row 2 (if any), cwd, hint
+  const agentLabels = agents.map(a => a.label);
+  const infoLines = [
+    `${chalk.bold("agentalk")}  ${chalk.dim("v" + version)}`,
+    agentLabels.slice(0, 4).join("  "),
+    agentLabels.length > 4 ? agentLabels.slice(4).join("  ") : null,
+    chalk.dim(cwd),
+    chalk.dim("type anything to start  ·  /help for commands"),
+  ].filter(l => l !== null);
+
+  console.log("");
+  const rows = Math.max(logoLines.length, infoLines.length);
+  for (let i = 0; i < rows; i++) {
+    const left  = logoLines[i]  ?? "          ";
+    const right = infoLines[i]  ?? "";
+    console.log(left + right);
+  }
+  console.log("");
 }
 
 function printFullHelp() {
