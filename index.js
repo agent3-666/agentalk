@@ -11,6 +11,7 @@ import { listAgents, enableAgent, disableAgent, addAgent, removeAgent, setAgentM
 import { resolveModel, inferProvider, PROVIDER_COLORS, setApiKey, getApiKey, listApiKeys, setCustomEndpoint, getCustomEndpoint } from "./lib/model-runner.js";
 import { createRepl } from "./lib/input.js";
 import { loadLang, setLang, getLang, t } from "./lib/i18n.js";
+import { getCachedUpdateInfo, checkForUpdatesInBackground } from "./lib/update-check.js";
 
 // ─── Load language setting ───────────────────────────────────────────
 loadLang();
@@ -109,6 +110,12 @@ function printBanner() {
     g("▐█▌   ▐█▌  ▐█▌   "),
   ];
 
+  // Check for cached update info (never blocks — background fetch happens after)
+  const updateInfo = getCachedUpdateInfo(version);
+  const updateLine = updateInfo
+    ? chalk.yellow(`  ◆ Update available: v${version} → v${updateInfo.latestVersion}  ·  git pull && npm install`)
+    : null;
+
   // Info column: title, agents row 1, agents row 2 (if any), cwd, hint
   const agentLabels = agents.map(a => a.label);
   const infoLines = [
@@ -122,11 +129,15 @@ function printBanner() {
   console.log("");
   const rows = Math.max(logoLines.length, infoLines.length);
   for (let i = 0; i < rows; i++) {
-    const left  = logoLines[i]  ?? "          ";
+    const left  = logoLines[i]  ?? "                   ";
     const right = infoLines[i]  ?? "";
     console.log(left + right);
   }
+  if (updateLine) console.log(updateLine);
   console.log("");
+
+  // Kick off background version check for next startup
+  checkForUpdatesInBackground(version);
 }
 
 function printFullHelp() {
