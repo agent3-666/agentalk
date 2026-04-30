@@ -1,8 +1,8 @@
-# AgentTalk
+# AgenTalk
 
 **Get more out of the AI subscriptions you already pay for.**
 
-If you're on Claude Max + Gemini Plus + ChatGPT Pro + GLM Pro (or any mix), you usually have one main agent doing most of the work while the others sit idle — Codex at 100% this week, Gemini with headroom under its hidden rate limits, GLM barely touched. AgentTalk offers two patterns for putting that slack to work:
+If you're on Claude Max + Gemini Plus + ChatGPT Pro + GLM Pro (or any mix), you usually have one main agent doing most of the work while the others sit idle — Codex at 100% this week, Gemini with headroom under its hidden rate limits, GLM barely touched. AgenTalk offers two patterns for putting that slack to work:
 
 ### 🏛️ Committee — `agentalk`
 Gather Claude, Codex, Gemini, OpenCode into a shared panel. Pick a mode: discuss in parallel rounds, debate in turns, panel-first-then-debate, brainstorm for divergence, challenge adversarially, deepen root causes. For **decisions that benefit from multiple expert perspectives** — architecture, stress-testing proposals, root-cause analysis — you're not stuck asking one model. The room debates, a moderator converges, you read the transcript.
@@ -67,7 +67,7 @@ gemini    # Google Gemini CLI  → github.com/google-gemini/gemini-cli
 opencode  # OpenCode CLI       → opencode.ai
 ```
 
-AgentTalk works with any subset of the above — inactive CLIs are automatically skipped.
+AgenTalk works with any subset of the above — inactive CLIs are automatically skipped.
 
 ## Install
 
@@ -207,7 +207,7 @@ Agents self-terminate by writing `[STOP]` in their response. The moderator confi
 
 ## Token Usage
 
-After every discussion, AgentTalk prints a per-agent token breakdown:
+After every discussion, AgenTalk prints a per-agent token breakdown:
 
 ```
 ── Token Usage ──
@@ -226,7 +226,7 @@ Real token counts (prompt + completion breakdown) are shown for API agents added
 When a discussion topic contains URLs or file references, the moderator runs a pre-flight phase before round 1:
 
 1. **Plan** — moderator reads the topic and outputs `FORMAT:`, `AGENTS:`, `ROUNDS:`, `FETCH:`, `FILES:` lines
-2. **Gather** — AgentTalk fetches each URL (15s timeout, HTML stripped, 20k char cap) and reads each file (50k char cap)
+2. **Gather** — AgenTalk fetches each URL (15s timeout, HTML stripped, 20k char cap) and reads each file (50k char cap)
 3. **Synthesise** — moderator compresses all gathered content into a `[SOURCES]` / `[KEY FACTS]` / `[DISCUSSION FOCUS]` briefing
 4. **Inject** — briefing is added to context as `[BRIEFING]` so all agents see it in round 1
 
@@ -234,7 +234,7 @@ If any fetch fails the discussion proceeds without that material — no crash.
 
 ## Extending agents
 
-AgentTalk ships with 22 pre-defined agent slots. Enable any of them:
+AgenTalk ships with 22 pre-defined agent slots. Enable any of them:
 
 ```bash
 /agents enable aider
@@ -260,7 +260,7 @@ Agent args support `{prompt}` and `{model}` placeholders, plus a `model_flag` fo
 
 ## Claude Code Integration
 
-AgentTalk installs two skills into Claude Code automatically on `npm install`:
+AgenTalk installs two skills into Claude Code automatically on `npm install`:
 
 ### `/agentalk` — Read past discussion results
 
@@ -334,7 +334,7 @@ The same primitives are also exposed as MCP tools in `agentalk-mcp` for MCP-base
 
 ### `/agentalk-consult` — Agent-initiated committee consultation
 
-Claude Code can autonomously call the AgentTalk panel mid-task when it faces real uncertainty — without you asking. Think of it as Claude convening a committee before making a consequential decision.
+Claude Code can autonomously call the AgenTalk panel mid-task when it faces real uncertainty — without you asking. Think of it as Claude convening a committee before making a consequential decision.
 
 The skill maps uncertainty type to the right discussion mode:
 
@@ -349,7 +349,7 @@ The skill maps uncertainty type to the right discussion mode:
 
 When invoked, Claude frames the question as a well-scoped topic, runs the appropriate headless mode, then tells you the conclusion and how it's applying it:
 
-> "I consulted the AgentTalk panel on the rate limiting approach. Consensus: start with in-process token bucket, add a Redis flag from day one so migration is a config change not a rewrite. Applying that now..."
+> "I consulted the AgenTalk panel on the rate limiting approach. Consensus: start with in-process token bucket, add a Redis flag from day one so migration is a config change not a rewrite. Applying that now..."
 
 The skill installs to `~/.claude/skills/` on postinstall. To reinstall manually:
 
@@ -359,7 +359,7 @@ node scripts/install-skill.js
 
 ## MCP Server
 
-AgentTalk exposes itself as an MCP server so other AI tools can run panel discussions:
+AgenTalk exposes itself as an MCP server so other AI tools can run panel discussions:
 
 ```bash
 agentalk-mcp    # starts the MCP server over stdio
@@ -392,7 +392,7 @@ Add to your MCP client config:
 
 ## How it works
 
-AgentTalk never calls LLM APIs directly for CLI agents. It spawns each agent's CLI in non-interactive (print) mode:
+AgenTalk never calls LLM APIs directly for CLI agents. It spawns each agent's CLI in non-interactive (print) mode:
 
 ```
 claude -p "..."
