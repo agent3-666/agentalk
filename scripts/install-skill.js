@@ -17,7 +17,7 @@ async function install() {
   const skillsDir = join(claudeDir, "skills");
   await mkdir(skillsDir, { recursive: true });
 
-  const skillFiles = ["agentalk.md", "agentalk-consult.md", "agentalk-delegate.md"];
+  const skillFiles = ["agentalk.md", "agentalk-delegate.md"];
   for (const file of skillFiles) {
     const src = join(__dirname, "../skills", file);
     if (existsSync(src)) {
@@ -26,10 +26,9 @@ async function install() {
     }
   }
 
-  console.log("\nAgentTalk Claude Code integration installed.");
-  console.log("  /agentalk          — read discussion results for current project");
-  console.log("  /agentalk-consult  — Claude self-initiates a panel discussion");
-  console.log("  /agentalk-delegate — Claude delegates sub-tasks to other AI CLIs (spreads subscription load)");
+  console.log("\nAgenTalk Claude Code integration installed.");
+  console.log("  /agentalk          — launch discussions or read past conclusions");
+  console.log("  /agentalk-delegate — delegate sub-tasks to other AI CLIs (spreads subscription load)");
 }
 
 install().catch(err => {

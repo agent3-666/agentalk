@@ -39,7 +39,7 @@ The two are independent binaries and can be used separately:
 - **Skill+CLI integration** — default path, zero extra setup. The `/agentalk-delegate` Claude Code skill invokes the CLI via Bash; no MCP registration required.
 
 ### Integration
-- **Claude Code skills** — `/agentalk`, `/agentalk-consult`, `/agentalk-delegate` auto-installed on postinstall (and re-installable via `agentalk-delegate init`)
+- **Claude Code skills** — `/agentalk`, `/agentalk-delegate` auto-installed on postinstall (and re-installable via `agentalk-delegate init`)
 - **MCP Server (optional, secondary)** — `agentalk-mcp` exposes `ask`, `discuss`, `debate`, `delegate`, `list_quotas`, `list_capabilities`, `remember`, `recall`, `task_status` for MCP-based clients. Most users don't need this; skills use CLI directly.
 
 ## Discussion Modes
@@ -84,7 +84,7 @@ npm install
 npm link        # makes `agentalk`, `agentalk-mcp`, `agentalk-model`, `agentalk-delegate` available globally
 ```
 
-The postinstall script automatically installs the three Claude Code skills (`/agentalk`, `/agentalk-consult`, `/agentalk-delegate`) into `~/.claude/skills/`. Run `agentalk-delegate init` at any time to re-install and see setup status.
+The postinstall script automatically installs the three Claude Code skills (`/agentalk`, `/agentalk-delegate`) into `~/.claude/skills/`. Run `agentalk-delegate init` at any time to re-install and see setup status.
 
 ## Usage
 
@@ -332,9 +332,9 @@ Example flow: user asks main agent to review an 80-page design doc. Main agent r
 
 The same primitives are also exposed as MCP tools in `agentalk-mcp` for MCP-based clients, but the default path is Skill+CLI.
 
-### `/agentalk-consult` — Agent-initiated committee consultation
+### `/agentalk` — Discussions and past conclusions
 
-Claude Code can autonomously call the AgenTalk panel mid-task when it faces real uncertainty — without you asking. Think of it as Claude convening a committee before making a consequential decision.
+Claude Code can autonomously call the AgenTalk panel mid-task when it faces real uncertainty, or retrieve past discussion conclusions on demand. The single `/agentalk` skill handles both.
 
 The skill maps uncertainty type to the right discussion mode:
 
