@@ -1,6 +1,6 @@
 ---
 name: agentalk
-description: Launch AgenTalk multi-agent discussions and read past AgenTalk conclusions for the current project. Use when facing genuine uncertainty, trade-offs, architecture decisions, proposal stress-tests, complex root-cause analysis, brainstorming needs, debate choices, or when the user asks about prior discussion outcomes, panel decisions, brainstorm results, conclusions, or what the agents decided.
+description: Launch AgenTalk multi-agent discussions and read past AgenTalk conclusions for the current project. Use when facing genuine uncertainty, trade-offs, architecture decisions, proposal stress-tests, complex root-cause analysis, brainstorming needs, debate choices, or when the user asks about prior discussion outcomes, panel decisions, brainstorm results, conclusions, or what the agents decided. Also check inbox for cross-session messages on startup.
 user-invocable: true
 allowed-tools:
   - Bash
@@ -8,6 +8,21 @@ allowed-tools:
 ---
 
 # AgenTalk
+
+## Inbox Check (run first)
+
+Before doing anything else, check for cross-session messages:
+
+```bash
+agentalk-inbox list
+```
+
+If there are unread messages:
+1. Show them to the user: who sent them, when, and what they say
+2. Tell the user: "I see N message(s) in the inbox. Here's what they say: ..."
+3. Ask if they want to act on any of them before continuing
+
+If there are no unread messages, proceed silently — do not mention the inbox.
 
 AgenTalk is a terminal multi-agent collaboration platform. It runs Claude Code, Codex, Gemini, OpenCode, and configured API model agents in structured discussions, debates, panels, brainstorms, challenges, and depth-first analysis, then saves conclusions and history locally.
 
