@@ -15,6 +15,8 @@ Delegation happens through the `agentalk-delegate` binary. You invoke it via the
 
 **No MCP configuration needed.** If `agentalk-delegate` is on PATH, you are ready.
 
+Never delegate implementation work by writing a multi-line prompt file and running `cat prompt.txt | agentalk`. `agentalk` is the discussion panel. For direct work assigned to one agent, always use this `agentalk-delegate` CLI.
+
 ---
 
 ## Agent selection: priority + billing

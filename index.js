@@ -23,6 +23,11 @@ const flagFromClaude = argv.includes("--from-claude");
 const flagHelp = argv.includes("-h") || argv.includes("--help");
 const flagInstallSkill = argv.includes("--install-skill");
 const flagVerbose = argv.includes("--verbose") || argv.includes("-v");
+const flagStdin = argv.includes("--stdin");
+const flagFileIdx = argv.findIndex(a => a === "--file");
+const flagFile = flagFileIdx !== -1 ? argv[flagFileIdx + 1] : null;
+const flagAgentsIdx = argv.findIndex(a => a === "--agents");
+const flagAgents = flagAgentsIdx !== -1 ? argv[flagAgentsIdx + 1] : null;
 
 // Non-interactive headless mode: --discuss / --debate / --panel / --brainstorm / --challenge / --deepen
 const flagDiscussIdx    = argv.findIndex(a => a === "--discuss");
@@ -31,13 +36,6 @@ const flagPanelIdx      = argv.findIndex(a => a === "--panel");
 const flagBrainstormIdx = argv.findIndex(a => a === "--brainstorm");
 const flagChallengeIdx  = argv.findIndex(a => a === "--challenge");
 const flagDeepenIdx     = argv.findIndex(a => a === "--deepen");
-const headlessTopic  = flagDiscussIdx    !== -1 ? argv[flagDiscussIdx    + 1]
-                     : flagDebateIdx     !== -1 ? argv[flagDebateIdx     + 1]
-                     : flagPanelIdx      !== -1 ? argv[flagPanelIdx      + 1]
-                     : flagBrainstormIdx !== -1 ? argv[flagBrainstormIdx + 1]
-                     : flagChallengeIdx  !== -1 ? argv[flagChallengeIdx  + 1]
-                     : flagDeepenIdx     !== -1 ? argv[flagDeepenIdx     + 1]
-                     : null;
 const headlessMode   = flagDiscussIdx    !== -1 ? "discuss"
                      : flagDebateIdx     !== -1 ? "debate"
                      : flagPanelIdx      !== -1 ? "panel"
@@ -45,6 +43,27 @@ const headlessMode   = flagDiscussIdx    !== -1 ? "discuss"
                      : flagChallengeIdx  !== -1 ? "challenge"
                      : flagDeepenIdx     !== -1 ? "deepen"
                      : null;
+const headlessFlagIdx = flagDiscussIdx    !== -1 ? flagDiscussIdx
+                      : flagDebateIdx     !== -1 ? flagDebateIdx
+                      : flagPanelIdx      !== -1 ? flagPanelIdx
+                      : flagBrainstormIdx !== -1 ? flagBrainstormIdx
+                      : flagChallengeIdx  !== -1 ? flagChallengeIdx
+                      : flagDeepenIdx;
+
+function collectHeadlessTopicArg() {
+  if (headlessFlagIdx === -1) return null;
+  const parts = [];
+  for (let i = headlessFlagIdx + 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--stdin" || arg === "--verbose" || arg === "-v") continue;
+    if (arg === "--file" || arg === "--agents") { i++; continue; }
+    if (arg.startsWith("--")) continue;
+    parts.push(arg);
+  }
+  return parts.join(" ").trim() || null;
+}
+
+const headlessTopic = collectHeadlessTopicArg();
 
 const inlineMsg = argv.filter((a) => !a.startsWith("-")).join(" ").trim();
 
@@ -179,6 +198,10 @@ function printFullHelp() {
   console.log(chalk.dim(`  ${t("banner.startup_header")}`));
   console.log(chalk.dim(`    ${t("banner.flag_c")}`));
   console.log(chalk.dim(`    ${t("banner.flag_claude")}`));
+  console.log(chalk.dim(`    --discuss|--debate|--panel|--brainstorm|--challenge|--deepen "topic"`));
+  console.log(chalk.dim(`    --stdin / --file <path>     pass long headless topics safely`));
+  console.log(chalk.yellow(`    Do not pipe multi-line prompt files into interactive agentalk.`));
+  console.log(chalk.dim(`    Use agentalk-delegate for implementation sub-tasks.`));
   console.log(chalk.dim(`    ${t("banner.quit_hint")}`));
 }
 
@@ -189,21 +212,79 @@ if (flagInstallSkill) {
   process.exit(0);
 }
 
+function readStdinText() {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { data += chunk; });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
+}
+
+function parseAgentList(value) {
+  if (!value) return null;
+  const keys = value
+    .split(/[\s,]+/)
+    .map(k => k.replace(/^@/, "").toLowerCase())
+    .filter(k => AGENTS[k]);
+  return keys.length ? [...new Set(keys)] : null;
+}
+
+function parseHeadlessMentions(input) {
+  const allKeys = Object.keys(AGENTS).join("|");
+  const mentionRe = new RegExp(`@(${allKeys})\\b`, "gi");
+  const targets = [];
+  let m;
+  while ((m = mentionRe.exec(input)) !== null) targets.push(m[1].toLowerCase());
+  const prompt = input.replace(new RegExp(`@(${allKeys})\\b`, "gi"), "").trim();
+  return { targets: [...new Set(targets)], prompt };
+}
+
 // ─── Headless mode: --discuss / --debate ────────────────────────────
-if (headlessMode && headlessTopic) {
+if (headlessMode) {
+  let topic = headlessTopic || "";
+  if (flagFileIdx !== -1) {
+    if (!flagFile || flagFile.startsWith("--")) {
+      console.error(chalk.red("--file requires a path."));
+      process.exit(2);
+    }
+    if (!existsSync(flagFile)) {
+      console.error(chalk.red(`File not found: ${flagFile}`));
+      process.exit(2);
+    }
+    topic = readFileSync(flagFile, "utf8");
+  } else if (flagStdin) {
+    topic = await readStdinText();
+  }
+  topic = topic.trim();
+  if (!topic) {
+    console.error(chalk.red(`Missing topic for --${headlessMode}.`));
+    console.error(chalk.dim(`Use: agentalk --${headlessMode} "topic"`));
+    console.error(chalk.dim(`  or: agentalk --${headlessMode} --stdin < prompt.txt`));
+    console.error(chalk.dim(`  or: agentalk --${headlessMode} --file prompt.txt`));
+    process.exit(2);
+  }
+
+  const mentioned = parseHeadlessMentions(topic);
+  const selectedAgents = parseAgentList(flagAgents) || mentioned.targets;
+  const agentsOpt = selectedAgents.length ? { agents: selectedAgents } : {};
+  const discussionTopic = mentioned.prompt || topic;
+
   const ctx = new ContextManager(process.cwd());
   // --verbose: stream each agent's output to stdout in real-time (capture=false)
   // default: capture silently, print only the final conclusion (clean for piping)
   let lines;
-  if      (headlessMode === "discuss")    lines = await discuss   (headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "panel")      lines = await panel     (headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "brainstorm") lines = await brainstorm(headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "challenge")  lines = await challenge (headlessTopic, ctx, { capture: !flagVerbose });
-  else if (headlessMode === "deepen")     lines = await deepen    (headlessTopic, ctx, { capture: !flagVerbose });
-  else                                    lines = await debate    (headlessTopic, ctx, { capture: !flagVerbose });
+  if      (headlessMode === "discuss")    lines = await discuss   (discussionTopic, ctx, { capture: !flagVerbose, ...agentsOpt });
+  else if (headlessMode === "panel")      lines = await panel     (discussionTopic, ctx, { capture: !flagVerbose, ...agentsOpt });
+  else if (headlessMode === "brainstorm") lines = await brainstorm(discussionTopic, ctx, { capture: !flagVerbose, ...agentsOpt });
+  else if (headlessMode === "challenge")  lines = await challenge (discussionTopic, ctx, { capture: !flagVerbose, ...agentsOpt });
+  else if (headlessMode === "deepen")     lines = await deepen    (discussionTopic, ctx, { capture: !flagVerbose, ...agentsOpt });
+  else                                    lines = await debate    (discussionTopic, ctx, { capture: !flagVerbose, ...agentsOpt });
 
   // Always persist a full transcript — programmatic consumers (skills, MCP) read it
-  const { global: summaryPath } = saveSummary(ctx, headlessTopic, Object.keys(AGENTS), { localDir: process.cwd() });
+  const summaryAgents = selectedAgents.length ? selectedAgents : Object.keys(AGENTS);
+  const { global: summaryPath } = saveSummary(ctx, discussionTopic, summaryAgents, { localDir: process.cwd() });
 
   if (!flagVerbose) {
     // Print the conclusion for simple piped usage

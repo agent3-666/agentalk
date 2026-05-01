@@ -51,6 +51,8 @@ agentalk --panel      "your topic"   # blind opening round, then debate
 agentalk --brainstorm "your topic"   # divergent ideas, no convergence pressure
 agentalk --challenge  "your topic"   # adversarial flaw-finding
 agentalk --deepen     "your topic"   # depth-first root cause analysis
+agentalk --deepen --stdin < prompt.txt
+agentalk --challenge --file prompt.txt
 ```
 
 Add `--verbose` to stream all agent output in real time:
@@ -58,6 +60,10 @@ Add `--verbose` to stream all agent output in real time:
 ```bash
 agentalk --panel "your topic" --verbose
 ```
+
+Do not run `cat prompt.txt | agentalk`. Piped multi-line input is not an interactive transcript and must not be used to drive REPL commands. Use `--stdin` / `--file` for long discussion topics.
+
+Do not use `agentalk` for implementation sub-tasks such as "ask Gemini to fix this test" or "ask Codex to edit these files". Use `agentalk-delegate` for that class of work.
 
 ### Choosing the right mode
 

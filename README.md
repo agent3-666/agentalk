@@ -101,10 +101,14 @@ agentalk --brainstorm "topic"   # divergent parallel rounds
 agentalk --challenge  "topic"   # adversarial review
 agentalk --deepen     "topic"   # depth-first serial drilling
 agentalk --debate     "topic" --verbose   # stream all output in real time
+agentalk --deepen --stdin < prompt.txt      # long headless topic
+agentalk --challenge --file prompt.txt      # long headless topic from a file
 
 # Pass a one-off message without entering the REPL
 agentalk "What's the best caching strategy for this project?"
 ```
+
+Do not pipe multi-line prompt files into the interactive REPL (`cat prompt.txt | agentalk`). Use `--stdin` / `--file` for headless discussion topics, and use `agentalk-delegate` for direct implementation sub-tasks assigned to one agent.
 
 ### In the REPL
 
