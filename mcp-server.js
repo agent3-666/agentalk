@@ -16,6 +16,11 @@ import {
   recallMemory,
   getTask,
 } from "./lib/supervisor.js";
+import { applyBudgetFromArgv } from "./lib/budget.js";
+
+// MCP server defaults to budget ON: callers are usually other agents that may
+// fan out aggressively. Pass --no-budget when launching mcp-server to disable.
+applyBudgetFromArgv();
 
 // ─── Helper: parse agent list from comma/space string ────────────────
 function parseAgents(str) {
@@ -83,7 +88,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "ask",
-      description: "向一个或多个 AI Agent（Claude、Codex、Gemini、OpenCode/GLM）提问，获取各自的独立回答。适合需要多角度快速参考的场景。",
+      description: "向一个或多个 AI Agent（Claude、Codex、Gemini、OpenCode/GLM）提问，获取各自的独立回答。适合需要多角度快速参考的场景。Specify agents explicitly — omitting agents is refused.",
       inputSchema: {
         type: "object",
         properties: {
@@ -98,7 +103,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "discuss",
-      description: "让多个 AI Agent 就某话题进行并行多轮讨论，直到达成共识。每轮所有 agent 同时发言，看到上一轮所有人的回复。",
+      description: "让多个 AI Agent 就某话题进行并行多轮讨论，直到达成共识。每轮所有 agent 同时发言，看到上一轮所有人的回复。Defaults exclude Claude (avoids Claude Code quota recursion). Pass agents=... to override.",
       inputSchema: {
         type: "object",
         properties: {
@@ -118,7 +123,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "debate",
-      description: "让多个 AI Agent 就某话题进行串行辩论，按 Codex → Gemini → GLM → Claude 顺序接力发言，每人都能看到前面所有人刚说的。",
+      description: "让多个 AI Agent 就某话题进行串行辩论，按 Codex → Gemini → GLM → Claude 顺序接力发言，每人都能看到前面所有人刚说的。Defaults exclude Claude (avoids Claude Code quota recursion). Pass agents=... to override.",
       inputSchema: {
         type: "object",
         properties: {
@@ -229,7 +234,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     if (name === "ask") {
       const { question, agents: agentsStr } = args;
-      const targets = parseAgents(agentsStr) || Object.keys(AGENTS);
+      const targets = parseAgents(agentsStr);
+      if (!targets) {
+        return {
+          content: [{ type: "text", text: "❌ agents parameter is required — specify which agents to ask (e.g. agents='codex,gemini'). Use list_capabilities to see what each agent is good at." }],
+        };
+      }
 
       ctx.add("user", question);
       const prompt = ctx.buildPrompt(null, "请回应以上消息。");
@@ -249,12 +259,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "discuss") {
       const { topic, agents: agentsStr, max_rounds = 4 } = args;
-      const agents = parseAgents(agentsStr) || undefined;
+      const agents = parseAgents(agentsStr) || Object.keys(AGENTS).filter(k => AGENTS[k].cmd !== "claude");
+      if (agents.length === 0) {
+        return {
+          content: [{ type: "text", text: "❌ No agents available after excluding claude. Pass agents=... explicitly." }],
+        };
+      }
 
       await discuss(topic, ctx, {
         maxRounds: max_rounds,
         capture: true,
-        ...(agents && { agents }),
+        agents,
       });
 
       return { content: [{ type: "text", text: formatDiscussionResult(ctx, "讨论") }] };
@@ -262,12 +277,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     if (name === "debate") {
       const { topic, agents: agentsStr, max_turns = 8 } = args;
-      const agents = parseAgents(agentsStr) || undefined;
+      const agents = parseAgents(agentsStr) || Object.keys(AGENTS).filter(k => AGENTS[k].cmd !== "claude");
+      if (agents.length === 0) {
+        return {
+          content: [{ type: "text", text: "❌ No agents available after excluding claude. Pass agents=... explicitly." }],
+        };
+      }
 
       await debate(topic, ctx, {
         maxTurns: max_turns,
         capture: true,
-        ...(agents && { agents }),
+        agents,
       });
 
       return { content: [{ type: "text", text: formatDiscussionResult(ctx, "辩论") }] };

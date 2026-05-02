@@ -25,7 +25,7 @@ The two are independent binaries and can be used separately:
 - **API model agents** — plug in any OpenAI-compatible model (OpenRouter, DeepSeek, Groq, etc.) via `/agents add-model`
 - **Token usage tracking** — per-agent token counts shown at the end of every discussion; real counts for API agents, estimates for CLI agents
 - **Moderator placement** — moderator defaults to the last active agent; new agents auto-insert at second-to-last
-- **22-agent registry** — 4 enabled by default (Claude, Codex, Gemini, OpenCode); enable Aider, Ollama, Amazon Q, Goose, SWE-agent and more via `/agents enable`
+- **22-agent registry** — 3 enabled by default (Codex, Gemini, OpenCode). Claude is shipped disabled to avoid double-billing when agentalk runs inside Claude Code (the `claude` CLI shares the host's quota); enable with `/agents enable claude` from a plain terminal, or pass `--include-claude` for a one-off override. Enable Aider, Ollama, Amazon Q, Goose, SWE-agent and more via `/agents enable`
 - **Shared context** — all agents see the same conversation history (up to 512k tokens, auto-compressed via moderator summary)
 - **Moderator pre-flight** — detects URLs in your topic, fetches them, reads mentioned files, synthesizes a `[BRIEFING]` injected into context before round 1
 - **Headless mode** — all six mode flags run a session and exit; `--verbose` streams output in real time

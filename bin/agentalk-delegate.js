@@ -39,6 +39,12 @@ import {
   unregisterSession,
   readInbox,
 } from "../lib/supervisor.js";
+import { applyBudgetFromArgv } from "../lib/budget.js";
+
+// Apply per-run agent call budget. Each `agentalk-delegate` invocation is
+// usually one agent call so the cap rarely fires here, but it's wired in
+// case multi-step delegations chain up. --no-budget disables.
+applyBudgetFromArgv();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -75,6 +81,7 @@ ${chalk.bold("Session delegation (delegate to a specific Claude Code session wit
 ${chalk.bold("Helpers")}
   ${chalk.cyan("agentalk-delegate quotas")}              observed quota state per agent (from real 429/rate-limit signals)
   ${chalk.cyan("agentalk-delegate capabilities")}        per-agent strengths / ctx window / cost tier / subscription vs pay-per-call
+  ${chalk.cyan("agentalk-delegate doctor")}              agent health + billing + auth sharing
   ${chalk.cyan('agentalk-delegate remember "fact"')}    append a fact to project memory (.agentalk/memory.jsonl)
   ${chalk.cyan("agentalk-delegate recall")}              read recent project memory entries
   ${chalk.cyan("agentalk-delegate task <id>")}           query a delegation task's state
@@ -614,6 +621,84 @@ function cmdReview() {
   console.log("");
 }
 
+// ─── doctor — agent health + billing + auth sharing ────────────────
+function cmdDoctor() {
+  const quotaState = readQuotaState();
+  const caps = readCapabilities();
+
+  const allAgentKeys = [...new Set([
+    ...Object.keys(quotaState),
+    ...Object.keys(AGENTS),
+  ])];
+
+  // Detect which hosts agentalk is running inside. Mirrors lib/agents.js's
+  // detectHosts(); kept inline here to avoid pulling in load-time logic.
+  const activeHosts = [];
+  if (process.env.CLAUDECODE === "1") activeHosts.push("claude-code");
+
+  console.log(chalk.bold("\nagentalk doctor — agent health + billing model + auth sharing\n"));
+
+  const colAgent = "AGENT".padEnd(14);
+  const colStatus = "STATUS".padEnd(18);
+  const colBilling = "BILLING".padEnd(16);
+  const colAuth = "AUTH-SHARED-WITH-HOST?";
+  console.log(`  ${chalk.dim(colAgent + colStatus + colBilling + colAuth)}`);
+
+  for (const key of allAgentKeys) {
+    const agentDef = AGENTS[key];
+
+    // STATUS
+    let status;
+    if (!agentDef) {
+      status = "filtered";
+    } else {
+      const qEntry = quotaState[key];
+      status = qEntry?.last_signal?.outcome || qEntry?.status || "unknown";
+    }
+
+    // BILLING
+    const billing = caps[key]?.billing || "unknown";
+
+    // AUTH-SHARED — read structured shares_auth_with_host field. Live AGENTS
+    // map carries it; for filtered-out agents we don't know, so fall back to
+    // the hardcoded claude+Claude-Code pair.
+    const sharedHosts = agentDef?.shares_auth_with_host || (key === "claude" ? ["claude-code"] : []);
+    const sharedActive = sharedHosts.filter(h => activeHosts.includes(h));
+    let authShared;
+    if (sharedActive.length > 0) {
+      const hostsLabel = sharedActive.map(h => h === "claude-code" ? "Claude Code" : h).join(", ");
+      authShared = agentDef
+        ? chalk.green("YES") + chalk.dim(` (${hostsLabel}) — skipped this run`)
+        : chalk.green("YES") + chalk.dim(` (${hostsLabel})`);
+    } else if (sharedHosts.length > 0) {
+      authShared = chalk.dim(`no (would share with ${sharedHosts.join(", ")})`);
+    } else {
+      authShared = "no";
+    }
+
+    const statusColor = status === "ok" || status === "available" ? chalk.green
+      : status === "filtered" ? chalk.yellow
+      : status === "unknown" ? chalk.dim
+      : chalk.red;
+
+    console.log(
+      `  ${key.padEnd(14)}` +
+      `${statusColor(status.padEnd(18))}` +
+      `${billing.padEnd(16)}` +
+      `${authShared}`
+    );
+  }
+
+  console.log("");
+  console.log(chalk.dim("Legend:"));
+  console.log(chalk.dim("  STATUS:  read from ~/.agentalk/quota.json (last_signal.outcome). 'filtered' means agent was excluded by CLAUDECODE filter for this run."));
+  console.log(chalk.dim("  BILLING: subscription | pay_per_call | unknown — read from capability data"));
+  console.log(chalk.dim("  AUTH-SHARED: 'YES' if calling this agent uses same OAuth as host. Currently only claude when CLAUDECODE=1."));
+  console.log(chalk.dim(""));
+  console.log(chalk.dim("Tip: pass --include-claude to override the auto-filter."));
+  console.log("");
+}
+
 // ─── Session registry commands ─────────────────────────────────────
 function cmdRegisterSession(name) {
   const cwd = argValue("--cwd");
@@ -782,7 +867,12 @@ async function cmdDelegateSession(name, task) {
 }
 
 // ─── Dispatch ──────────────────────────────────────────────────────
-const first = argv[0];
+// Skip leading global flags so they don't get parsed as commands.
+// --include-claude is consumed at module load by lib/agents.js; here we just
+// need to look past it when finding the first positional arg.
+const _firstIdx = argv.findIndex(a => a !== "--include-claude");
+const first = _firstIdx === -1 ? undefined : argv[_firstIdx];
+if (_firstIdx > 0) argv.splice(0, _firstIdx);
 
 if (!first || first === "help" || first === "--help" || first === "-h") {
   printHelp();
@@ -790,6 +880,7 @@ if (!first || first === "help" || first === "--help" || first === "-h") {
 }
 
 // Subcommand dispatch
+if (first === "doctor")       { cmdDoctor();                          process.exit(0); }
 if (first === "quotas")       { cmdQuotas();                          process.exit(0); }
 if (first === "capabilities") { cmdCapabilities();                    process.exit(0); }
 if (first === "init")         { await cmdInit();                      process.exit(0); }
