@@ -38,7 +38,11 @@ import {
   registerSession,
   unregisterSession,
   readInbox,
+  readUnseenInbox,
+  writeInboxCursor,
+  appendInbox,
 } from "../lib/supervisor.js";
+import { scanClaudeProjects, relativeTimeAgo } from "../lib/session-discovery.js";
 import { applyBudgetFromArgv } from "../lib/budget.js";
 
 // Apply per-run agent call budget. Each `agentalk-delegate` invocation is
@@ -71,10 +75,12 @@ ${chalk.bold("Primary: delegate a task")}
     --resume-step <tid>:<sid>    prepend that step's stdout as prior context (continues delegate's prior work)
     --no-value-report            suppress the [VALUE_REPORT] block (default: on — lets main agent tell you what was delegated and tokens saved)
 
-${chalk.bold("Session delegation (delegate to a specific Claude Code session with its accumulated context)")}
+${chalk.bold("Session delegation (delegate to another Claude Code session with its accumulated context)")}
+  ${chalk.cyan('agentalk-delegate @<name> "<task>" [options]')}   delegate to a session (alias OR basename of any cwd
+                                                  under ~/.claude/projects/ — no pre-registration needed)
+  ${chalk.cyan("agentalk-delegate sessions")}           list aliased + auto-discovered sessions
   ${chalk.cyan("agentalk-delegate register-session <name> --cwd <path> [--session-id <id>]")}
-  ${chalk.cyan('agentalk-delegate @<name> "<task>" [options]')}   delegate to registered session
-  ${chalk.cyan("agentalk-delegate sessions")}           list registered sessions
+                                                  optional: give a memorable alias to a project (e.g. @hub)
   ${chalk.cyan("agentalk-delegate unregister-session <name>")}
   ${chalk.cyan("agentalk-delegate inbox [--cwd X]")}    what delegations has this session received?
 
@@ -739,26 +745,56 @@ function cmdUnregisterSession(name) {
 }
 
 function cmdListSessions() {
-  const sessions = readSessions();
-  const names = Object.keys(sessions);
+  const aliases = readSessions();
+  const aliasNames = Object.keys(aliases);
+  const aliasedCwds = new Set(aliasNames.map(n => aliases[n].cwd));
+  const scanned = scanClaudeProjects();
+  const onlyAlias = argv.includes("--alias-only");
+  const onlyScan = argv.includes("--scan-only");
+
   if (flagJson) {
-    process.stdout.write(JSON.stringify(sessions, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({
+      aliases,
+      discovered: scanned,
+    }, null, 2) + "\n");
     return;
   }
-  if (names.length === 0) {
-    console.log(chalk.dim("(no sessions registered — use `agentalk-delegate register-session <name> --cwd <path>`)"));
+
+  if (aliasNames.length === 0 && scanned.length === 0) {
+    console.log(chalk.dim("(no sessions found — neither registered aliases nor ~/.claude/projects/ entries)"));
     return;
   }
-  console.log(chalk.bold(`\nRegistered sessions (${names.length}):\n`));
-  for (const name of names) {
-    const s = sessions[name];
-    const cwdExists = existsSync(s.cwd);
-    const mark = cwdExists ? chalk.green("✓") : chalk.red("✗");
-    console.log(`  ${mark} ${chalk.bold("@" + name)} ${chalk.dim("(" + s.agent + ")")}`);
-    console.log(`    ${chalk.dim("cwd:       ")} ${s.cwd}${cwdExists ? "" : chalk.red(" [missing]")}`);
-    console.log(`    ${chalk.dim("session_id:")} ${s.session_id || chalk.dim("(latest via -c)")}`);
-    console.log(`    ${chalk.dim("registered:")} ${s.registered_at}`);
+
+  if (!onlyScan && aliasNames.length > 0) {
+    console.log(chalk.bold(`\nRegistered aliases (${aliasNames.length}):\n`));
+    for (const name of aliasNames) {
+      const s = aliases[name];
+      const cwdExists = existsSync(s.cwd);
+      const mark = cwdExists ? chalk.green("✓") : chalk.red("✗");
+      console.log(`  ${mark} ${chalk.bold("@" + name)} ${chalk.dim("(" + s.agent + ")")}`);
+      console.log(`    ${chalk.dim("cwd:       ")} ${s.cwd}${cwdExists ? "" : chalk.red(" [missing]")}`);
+      console.log(`    ${chalk.dim("session_id:")} ${s.session_id || chalk.dim("(latest via -c)")}`);
+    }
   }
+
+  if (!onlyAlias && scanned.length > 0) {
+    const undecorated = scanned.filter(p => !aliasedCwds.has(p.cwd));
+    if (undecorated.length > 0) {
+      console.log(chalk.bold(`\nDiscovered (no alias — addressable by basename, ${undecorated.length}):\n`));
+      for (const p of undecorated.slice(0, 30)) {
+        const cwdExists = existsSync(p.cwd);
+        const mark = cwdExists ? chalk.green("·") : chalk.red("✗");
+        console.log(`  ${mark} ${chalk.bold("@" + p.basename)}  ${chalk.dim(p.cwd)}${cwdExists ? "" : chalk.red(" [missing]")}`);
+        console.log(`    ${chalk.dim("last active:")} ${relativeTimeAgo(p.last_active)}  ${chalk.dim("sessions:")} ${p.session_count}`);
+      }
+      if (undecorated.length > 30) {
+        console.log(chalk.dim(`  …and ${undecorated.length - 30} more (pass --json for full list)`));
+      }
+    }
+  }
+  console.log("");
+  console.log(chalk.dim("Usage: agentalk-delegate @<alias-or-basename> \"<task>\""));
+  console.log(chalk.dim("Tip:   register-session <alias> --cwd <path>  → give a memorable name to a discovered project."));
   console.log("");
 }
 
@@ -790,6 +826,73 @@ function cmdInbox() {
   console.log("");
 }
 
+// ─── Inbox hook (Claude Code SessionStart / UserPromptSubmit) ──────
+// Emits UNSEEN inbox records as injected context so a running Claude
+// Code session is told — at its next turn, or on startup — about
+// delegations / notes it received while it wasn't looking, then
+// advances the seen-cursor. Silent (exit 0, no stdout) when nothing is
+// new, so it adds zero noise to normal turns.
+function cmdInboxHook() {
+  const cwd = argValue("--cwd") || process.cwd();
+  const event = argValue("--event") || "UserPromptSubmit";
+  let unseen;
+  try { unseen = readUnseenInbox(cwd, { limit: 20 }); }
+  catch { process.exit(0); }
+  if (!unseen || unseen.length === 0) process.exit(0);
+
+  const lines = unseen.map(r => {
+    const when = (r.ts || "").slice(0, 16).replace("T", " ");
+    if (r.kind === "note") {
+      return `• [${when}] 留言 from ${r.from_caller || "?"}: ${r.task_summary || r.content || ""}`;
+    }
+    const ask = r.task_summary || "(no summary)";
+    const out = r.outcome ? ` → ${r.outcome}` : "";
+    return `• [${when}] ${r.from_caller || "?"} 委托了你: ${ask}${out}`;
+  });
+
+  const context = [
+    `📥 agentalk inbox: 你收到 ${unseen.length} 条新消息(自上次查看)。`,
+    `这些是其他 session 委托给你、已由你的分身自动应答的回执(或别人给你的留言);你的主对话上下文未受影响。`,
+    ...lines,
+    `(完整详情运行: agentalk-delegate inbox)`,
+  ].join("\n");
+
+  const newest = unseen[unseen.length - 1].ts;
+  if (newest) writeInboxCursor(cwd, newest);
+
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: { hookEventName: event, additionalContext: context },
+  }) + "\n");
+  process.exit(0);
+}
+
+// ─── Note: leave a 留言 in a session's inbox ───────────────────────
+// Generalizes the inbox beyond delegation receipts — any caller (human
+// or another session) can drop a message for a session, surfaced the
+// same way via inbox-hook.
+function cmdNote(target, message) {
+  if (!target || !message) {
+    console.error('Usage: agentalk-delegate note <@alias-or-cwd> "<message>" [--from <name>]');
+    process.exit(2);
+  }
+  let cwd = target;
+  if (target.startsWith("@")) {
+    const sess = readSessions()[target.slice(1)];
+    if (!sess) {
+      console.error(`No registered session "${target}". Pass a cwd path instead, or register-session first.`);
+      process.exit(2);
+    }
+    cwd = sess.cwd;
+  }
+  const p = appendInbox(cwd, {
+    kind: "note",
+    from_caller: argValue("--from") || "cli",
+    task_summary: message.slice(0, 300),
+    outcome: "note",
+  });
+  console.log(p ? `✓ 留言已投递到 ${p}` : `✗ 投递失败(目标 cwd 不可写: ${cwd})`);
+}
+
 // ─── Session-target delegate (@name) ───────────────────────────────
 async function cmdDelegateSession(name, task) {
   const timeoutStr = argValue("--timeout");
@@ -801,24 +904,35 @@ async function cmdDelegateSession(name, task) {
   const filesRaw = argValue("--files");
   const files = filesRaw ? filesRaw.split(",").map(s => s.trim()).filter(Boolean) : undefined;
 
-  const result = await supervisorDelegateSession({
-    sessionName: name,
-    brief: {
-      task,
-      files,
-      context: argValue("--context") || undefined,
-      output: argValue("--output") || undefined,
-      budget: argValue("--budget") || undefined,
-    },
-    taskId: argValue("--task-id") || null,
-    mainAgent: "cli",
-    timeout,
-  });
+  let result;
+  try {
+    result = await supervisorDelegateSession({
+      sessionName: name,
+      brief: {
+        task,
+        files,
+        context: argValue("--context") || undefined,
+        output: argValue("--output") || undefined,
+        budget: argValue("--budget") || undefined,
+      },
+      taskId: argValue("--task-id") || null,
+      mainAgent: "cli",
+      timeout,
+    });
+  } catch (err) {
+    process.stdout.write(`[STATUS] error\n`);
+    process.stdout.write(`[AGENT] @${name}\n`);
+    process.stdout.write(`[DIAGNOSTICS]\n${err.message}\n[END_DIAGNOSTICS]\n`);
+    process.exit(2);
+  }
 
   // Same marker shape as regular delegate so skills parse uniformly.
   process.stdout.write(`[STATUS] ${result.status}\n`);
   process.stdout.write(`[AGENT] ${result.agent}\n`);
   process.stdout.write(`[SESSION_CWD] ${result.session_cwd || "?"}\n`);
+  if (result.resolve_source && result.resolve_source !== "alias") {
+    process.stdout.write(`[SESSION_RESOLVED] ${result.resolve_source} (no alias registered — matched by basename scan)\n`);
+  }
   if (result.task_id) {
     const taskPath = join(homedir(), ".agentalk", "tasks", `${result.task_id}.jsonl`);
     process.stdout.write(`[TASK] ${taskPath}\n`);
@@ -887,6 +1001,8 @@ if (first === "init")         { await cmdInit();                      process.ex
 if (first === "review")       { cmdReview();                          process.exit(0); }
 if (first === "sessions")     { cmdListSessions();                    process.exit(0); }
 if (first === "inbox")        { cmdInbox();                           process.exit(0); }
+if (first === "inbox-hook")   { cmdInboxHook();                       process.exit(0); }
+if (first === "note")         { cmdNote(argv[1], argv[2]);            process.exit(0); }
 
 if (first === "register-session") {
   const name = argv[1];

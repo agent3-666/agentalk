@@ -300,6 +300,18 @@ agentalk-delegate review           # per-agent performance from delegations.json
 agentalk-delegate init             # setup status + next-step hints
 ```
 
+**Cross-session delegation** — message another Claude Code session that has its own accumulated context:
+
+```bash
+agentalk-delegate sessions                       # list aliases + every project auto-discovered
+                                                 # from ~/.claude/projects/
+agentalk-delegate @clawplus "what's the API contract for /sessions?"
+agentalk-delegate @hub "do you have a key for X?"
+agentalk-delegate inbox                          # delegations received by this cwd
+```
+
+`@<name>` resolves in this order: registered alias → exact basename of any cwd under `~/.claude/projects/` → unique substring match. No pre-registration needed — every project you've ever opened in Claude Code is addressable by its basename. Use `register-session <alias> --cwd <path>` only when you want a memorable short alias (e.g. `@hub`) or to disambiguate.
+
 Output is structured `[MARKER]` lines on stdout so skills/scripts parse deterministically:
 
 ```

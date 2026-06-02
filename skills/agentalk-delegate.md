@@ -297,16 +297,26 @@ If missing: `npm install -g agentalk`.
 
 Beyond delegating to agent types (`gemini`, `codex`, ...) you can delegate to a **specific Claude Code session** that has its own accumulated context. Example use case: you're in project A and need to know what was decided in an ongoing project B session. Instead of re-briefing from scratch, ask B's session directly.
 
-Setup (once per session you want addressable):
+**No setup needed for the common case.** Every project under `~/.claude/projects/` (i.e. any cwd you've ever opened Claude Code in) is auto-discovered and addressable by its basename:
+
 ```bash
-agentalk-delegate register-session sumplus --cwd /path/to/Sumplus
-# optionally --session-id <id> for a specific session; default: latest in cwd
+agentalk-delegate sessions                # see what's discoverable + which have aliases
+agentalk-delegate @Sumplus "What was the auth token storage decision?"
+agentalk-delegate @clawplus "Review this diff" --files ./patch.diff
 ```
 
-Then delegate:
+Resolution order for `@<name>`:
+1. Registered alias in `~/.agentalk/sessions.json`
+2. Exact basename match (case-insensitive)
+3. Unique substring match on basename
+
+If ambiguous, the error lists candidates — pick a longer prefix or register an alias.
+
+**Optional: register a memorable alias** for a frequently-targeted project:
 ```bash
-agentalk-delegate @sumplus "What was the auth token storage decision?"
-agentalk-delegate @sumplus "Review this diff" --files ./patch.diff
+agentalk-delegate register-session sumplus --cwd /path/to/Sumplus
+# Then `@sumplus` resolves to that alias instead of needing the full basename.
+# Optional --session-id <id> pins a specific session; default: latest in cwd.
 ```
 
 Under the hood spawns `claude --resume <id> -p "..." --no-session-persistence` in the session's cwd — the delegate sees that session's full conversation history, but the question + answer are NOT written to the live session's JSONL (won't surprise you later).
@@ -323,9 +333,9 @@ So the honest user-facing sentence for session delegations looks like:
 | Command | Purpose |
 |---------|---------|
 | `agentalk-delegate <agent> "<task>" [opts]` | Delegate to an agent type (fresh CLI spawn) |
-| `agentalk-delegate @<name> "<task>" [opts]` | Delegate to a registered session (resumes that session's context, non-persistent) |
-| `agentalk-delegate register-session <name> --cwd <path>` | Register a session as an addressable target |
-| `agentalk-delegate sessions` | List registered sessions |
+| `agentalk-delegate @<name> "<task>" [opts]` | Delegate to a session (alias OR basename of any project under `~/.claude/projects/`; resumes that session's context, non-persistent) |
+| `agentalk-delegate register-session <name> --cwd <path>` | (Optional) give an alias to a project — only needed for ergonomics or disambiguation |
+| `agentalk-delegate sessions` | List aliases + every auto-discovered project |
 | `agentalk-delegate inbox [--cwd X]` | See what delegations a session has received |
 | `agentalk-delegate quotas` | Observed quota state (real signals, not predicted) |
 | `agentalk-delegate capabilities` | What each agent is good at + priority/billing badges |
