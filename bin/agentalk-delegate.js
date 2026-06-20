@@ -70,7 +70,9 @@ ${chalk.bold("Primary: delegate a task")}
     --context "..."              2-3 lines of background the delegate needs
     --output "..."               expected output format / focus
     --budget "..."               length / detail hint (e.g. "200 words")
-    --timeout <sec>              override default timeout (default: 600s for delegations)
+    --timeout <sec>              total timeout for the call (default: 600s)
+    --inactivity-sec <sec>       kill child if no stdout/stderr for this long
+                                 (0 = disable; default: per-agent — opencode 900, others 600)
     --task-id <id>               reuse an existing task (multi-step)
     --resume-step <tid>:<sid>    prepend that step's stdout as prior context (continues delegate's prior work)
     --no-value-report            suppress the [VALUE_REPORT] block (default: on — lets main agent tell you what was delegated and tokens saved)
@@ -115,6 +117,19 @@ async function cmdDelegate(agent, task) {
     console.error(`Invalid --timeout value: ${timeoutStr}. Expected positive integer seconds.`);
     process.exit(2);
   }
+  // --inactivity-sec accepts non-negative int. 0 disables the stream-silence
+  // watchdog; only total --timeout bounds the call. null/absent → per-agent
+  // default or supervisor's DEFAULT_INACTIVITY_SEC.
+  const inactivityStr = argValue("--inactivity-sec");
+  let inactivitySec = null;
+  if (inactivityStr !== undefined) {
+    const n = parseInt(inactivityStr, 10);
+    if (isNaN(n) || n < 0) {
+      console.error(`Invalid --inactivity-sec value: ${inactivityStr}. Expected non-negative integer (0 = disable).`);
+      process.exit(2);
+    }
+    inactivitySec = n;
+  }
   // --resume-step accepts "taskId:stepId" form, e.g. t_xxx:s1
   const resumeRaw = argValue("--resume-step");
   let resumeStep = null;
@@ -139,6 +154,7 @@ async function cmdDelegate(agent, task) {
     taskId: argValue("--task-id") || null,
     mainAgent: "cli",
     timeout,
+    inactivitySec,
     resumeStep,
   });
 
