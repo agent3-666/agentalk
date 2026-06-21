@@ -180,7 +180,14 @@ Ctrl+C          interrupt
 
 ### Adding API model agents
 
-Any OpenAI-compatible model can be added as an agent. A model only needs an **id** and an **API key** — the endpoint is auto-resolved for known providers (openai, deepseek, groq, moonshot, zhipu, mistral, together, xai, cursor). For an unknown provider, also set a base URL with `/agents set-endpoint <provider> <url>`.
+Any OpenAI-compatible model can be added as an agent. A model only needs an **id** and an **API key** — the endpoint is auto-resolved for known providers (openai, deepseek, groq, moonshot, zhipu, zai, mistral, together, xai, cursor). For an unknown provider, also set a base URL with `/agents set-endpoint <provider> <url>`.
+
+**GLM has two billing pools.** A `glm-*` id resolves to the Zhipu open platform (`open.bigmodel.cn`, pay-per-token). A **GLM Coding Plan** key from z.ai is a *subscription* on a separate pool — using it on the Zhipu endpoint returns `1113 余额不足或无可用资源包`. For a Coding Plan key, prefix the model with the `zai` provider so it routes to z.ai's coding endpoint:
+
+```bash
+/agents set-key zai <your-z.ai-coding-plan-key>
+/agents add-model zai/glm-4.6
+```
 
 ```bash
 # OpenRouter

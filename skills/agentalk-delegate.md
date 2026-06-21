@@ -316,13 +316,21 @@ If ambiguous, the error lists candidates — pick a longer prefix or register an
 
 ## Provisioning a new API model for the user
 
-If the user says "add model X" or "use my DeepSeek/Groq/OpenRouter key", you can register it as a callable agent **without** entering the interactive REPL. A model needs only an **id** and an **API key** — the endpoint auto-resolves for known providers (openai, deepseek, groq, moonshot, zhipu, mistral, together, xai, cursor). For an unknown provider, also pass `--endpoint <base-url>` (must be OpenAI-compatible `/chat/completions`).
+If the user says "add model X" or "use my DeepSeek/Groq/OpenRouter key", you can register it as a callable agent **without** entering the interactive REPL. A model needs only an **id** and an **API key** — the endpoint auto-resolves for known providers (openai, deepseek, groq, moonshot, zhipu, zai, mistral, together, xai, cursor). For an unknown provider, also pass `--endpoint <base-url>` (must be OpenAI-compatible `/chat/completions`).
 
 ```bash
 agentalk-delegate add-model deepseek/deepseek-chat --key sk-... --enable
 agentalk-delegate set-key <provider> <api-key>     # store/replace a provider key
 agentalk-delegate enable <agent-key>               # turn on a disabled agent
 ```
+
+**GLM key? Watch the billing pool.** `glm-*` resolves to the Zhipu open platform (`open.bigmodel.cn`, pay-per-token). A **GLM Coding Plan** key from z.ai is a subscription on a *different* pool — on the Zhipu endpoint it returns `1113 余额不足或无可用资源包`. For a Coding Plan key, use the `zai` provider so it routes to z.ai's coding endpoint:
+
+```bash
+agentalk-delegate add-model zai/glm-4.6 --key <z.ai-coding-plan-key> --enable
+```
+
+When a bare `glm-*` add resolves to `zhipu`, `add-model` emits a `[HINT]` line pointing at the `zai/` alternative — surface it if the user mentions a "coding plan" or z.ai key.
 
 `add-model` emits parseable markers:
 - `[STATUS] ok` / `error`
