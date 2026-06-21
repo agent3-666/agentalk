@@ -464,7 +464,15 @@ async function handleAgentsCommand(sub) {
         output: "text",
         note: `${provider}/${model} via API — set key with: /agents set-key ${provider} <key>`,
       });
-      console.log(r.ok ? chalk.green(t("agents.add_model_added", { key, model: modelId })) : chalk.red(r.msg));
+      if (r.ok) {
+        console.log(chalk.green(t("agents.add_model_added", { key, model: modelId })));
+        // Added disabled by default (pay-per-call). Tell the user the two
+        // steps to make it live: set the API key, then enable.
+        console.log(chalk.dim(`  → set key:  /agents set-key ${provider} <your-key>`));
+        console.log(chalk.dim(`  → enable:   /agents enable ${key}`));
+      } else {
+        console.log(chalk.red(r.msg));
+      }
     }
     console.log(chalk.dim(t("agents.restart_required")));
     return;
@@ -526,7 +534,10 @@ async function handleAgentsCommand(sub) {
 
     const r = addAgent(def);
     console.log(r.ok ? chalk.green(r.msg) : chalk.red(r.msg));
-    if (r.ok) console.log(chalk.dim(t("agents.restart_required")));
+    if (r.ok) {
+      console.log(chalk.dim(`  → enable:   /agents enable ${def.key}`));
+      console.log(chalk.dim(t("agents.restart_required")));
+    }
     return;
   }
 

@@ -312,6 +312,26 @@ Resolution order for `@<name>`:
 
 If ambiguous, the error lists candidates — pick a longer prefix or register an alias.
 
+---
+
+## Provisioning a new API model for the user
+
+If the user says "add model X" or "use my DeepSeek/Groq/OpenRouter key", you can register it as a callable agent **without** entering the interactive REPL. A model needs only an **id** and an **API key** — the endpoint auto-resolves for known providers (openai, deepseek, groq, moonshot, zhipu, mistral, together, xai, cursor). For an unknown provider, also pass `--endpoint <base-url>` (must be OpenAI-compatible `/chat/completions`).
+
+```bash
+agentalk-delegate add-model deepseek/deepseek-chat --key sk-... --enable
+agentalk-delegate set-key <provider> <api-key>     # store/replace a provider key
+agentalk-delegate enable <agent-key>               # turn on a disabled agent
+```
+
+`add-model` emits parseable markers:
+- `[STATUS] ok` / `error`
+- `[AGENT_KEY] <key>` — how you'll call it afterward (`agentalk-delegate <key> "..."`)
+- `[PROVIDER] <p>` · `[ENABLED] yes|no` · `[KEY_SET] yes|no`
+- `[NEXT_STEPS] ... [END_NEXT_STEPS]` — exactly what's left to do (set key / enable / set endpoint)
+
+**Added ≠ enabled.** Without `--enable`, the model is registered but **disabled** — pay-per-call models should never start billing just from being added. Read `[ENABLED]` / `[KEY_SET]` and follow `[NEXT_STEPS]` to finish. The new agent becomes callable after any running `agentalk` REPL restarts (headless `agentalk-delegate` picks it up immediately).
+
 **Optional: register a memorable alias** for a frequently-targeted project:
 ```bash
 agentalk-delegate register-session sumplus --cwd /path/to/Sumplus
@@ -336,6 +356,9 @@ So the honest user-facing sentence for session delegations looks like:
 | `agentalk-delegate @<name> "<task>" [opts]` | Delegate to a session (alias OR basename of any project under `~/.claude/projects/`; resumes that session's context, non-persistent) |
 | `agentalk-delegate register-session <name> --cwd <path>` | (Optional) give an alias to a project — only needed for ergonomics or disambiguation |
 | `agentalk-delegate sessions` | List aliases + every auto-discovered project |
+| `agentalk-delegate add-model <id> [--key K] [--endpoint U] [--enable]` | Register an OpenAI-compatible API model as an agent (disabled unless `--enable`) |
+| `agentalk-delegate set-key <provider> <key>` | Store/replace a provider API key |
+| `agentalk-delegate enable <key>` | Enable a disabled agent (added agents start off) |
 | `agentalk-delegate inbox [--cwd X]` | See what delegations a session has received |
 | `agentalk-delegate quotas` | Observed quota state (real signals, not predicted) |
 | `agentalk-delegate capabilities` | What each agent is good at + priority/billing badges |

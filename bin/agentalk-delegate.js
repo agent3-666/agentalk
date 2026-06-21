@@ -23,7 +23,10 @@ import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
 import { AGENTS } from "../lib/agents.js";
-import { listAgents } from "../lib/config.js";
+import { listAgents, addAgent, enableAgent } from "../lib/config.js";
+import {
+  resolveModel, PROVIDER_COLORS, setApiKey, setCustomEndpoint, getApiKey,
+} from "../lib/model-runner.js";
 import {
   delegate as supervisorDelegate,
   delegateSession as supervisorDelegateSession,
@@ -96,6 +99,16 @@ ${chalk.bold("Helpers")}
   ${chalk.cyan("agentalk-delegate tail <id>")}           stream a task's stdout events ([--step s1] [--stream stderr] [--follow])
   ${chalk.cyan("agentalk-delegate init")}                setup status (CLIs, skills) + next-step hints
   ${chalk.cyan("agentalk-delegate review")}              per-agent performance from delegations.jsonl
+
+${chalk.bold("Add an API model (headless — provision a new model for the user)")}
+  ${chalk.cyan("agentalk-delegate add-model <model-id> [--key <api-key>] [--endpoint <url>] [--enable]")}
+                                          register an OpenAI-compatible API model as an agent.
+                                          Endpoint auto-resolves for known providers (openai, deepseek,
+                                          groq, moonshot, zhipu, mistral, together, xai, cursor) — for
+                                          those, model-id + --key is all you need. Added DISABLED unless
+                                          --enable. e.g. add-model deepseek/deepseek-chat --key sk-xxx --enable
+  ${chalk.cyan("agentalk-delegate set-key <provider> <api-key>")}   store/replace an API key for a provider
+  ${chalk.cyan("agentalk-delegate enable <agent-key>")}             enable a disabled agent (added agents start off)
 
 ${chalk.bold("Output format (for shell/skill parsing)")}
   Delegation success   → [STATUS] ok / [TASK] <jsonl path> / [TASK_ID] <id> / [FINDINGS] ... / [TOKENS] N
@@ -996,6 +1009,77 @@ async function cmdDelegateSession(name, task) {
   process.exit(result.status === "ok" || result.status === "timeout_partial" ? 0 : 1);
 }
 
+// ─── Model management (headless) ───────────────────────────────────
+// Lets another agent provision a new API model for the user without the
+// interactive REPL. The concept is simple: a model needs an id + a key
+// (+ a base URL only for providers we don't already know). For the ~9
+// known providers the endpoint is auto-resolved, so id + key is enough.
+//
+//   agentalk-delegate add-model <model-id> [--key <k>] [--endpoint <url>] [--enable]
+//   agentalk-delegate set-key <provider> <api-key>
+//
+// Added DISABLED by default (these are pay-per-call) — pass --enable to
+// turn it on immediately, or run `enable` later.
+function cmdAddModel(modelId) {
+  const { provider, model } = resolveModel(modelId);
+  const key = model.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+  const color = PROVIDER_COLORS[provider] || "#6B7280";
+  const apiKey = argValue("--key");
+  const endpoint = argValue("--endpoint");
+  const enable = argv.includes("--enable");
+
+  const r = addAgent({
+    key,
+    name: model,
+    cmd: "agentalk-model",
+    args: ["-m", modelId, "{prompt}"],
+    color,
+    output: "text",
+    note: `${provider}/${model} via API (OpenAI-compatible /chat/completions)`,
+    enabled: enable,
+  });
+  if (!r.ok) {
+    process.stdout.write(`[STATUS] error\n[DIAGNOSTICS]\ndetail: ${r.msg}\n[END_DIAGNOSTICS]\n`);
+    process.exit(2);
+  }
+
+  if (apiKey) setApiKey(provider, apiKey);
+  if (endpoint) setCustomEndpoint(provider, endpoint);
+
+  const haveKey = !!getApiKey(provider);
+  process.stdout.write(`[STATUS] ok\n`);
+  process.stdout.write(`[MODEL] ${modelId}\n`);
+  process.stdout.write(`[AGENT_KEY] ${key}\n`);
+  process.stdout.write(`[PROVIDER] ${provider}\n`);
+  process.stdout.write(`[ENABLED] ${r.enabled ? "yes" : "no"}\n`);
+  process.stdout.write(`[KEY_SET] ${haveKey ? "yes" : "no"}\n`);
+  // Tell the caller exactly what's left so an agent can finish provisioning.
+  const todo = [];
+  if (!haveKey) todo.push(`set the API key:  agentalk-delegate set-key ${provider} <api-key>`);
+  if (!r.enabled) todo.push(`enable it:        agentalk-delegate enable ${key}`);
+  if (!PROVIDER_COLORS[provider]) todo.push(`unknown provider — set base URL:  agentalk-delegate add-model ${modelId} --endpoint <url>`);
+  todo.push(`then call it:     agentalk-delegate ${key} "<task>"  (after restarting any running agentalk)`);
+  process.stdout.write(`[NEXT_STEPS]\n${todo.map(s => "- " + s).join("\n")}\n[END_NEXT_STEPS]\n`);
+  process.exit(0);
+}
+
+function cmdSetKey(provider, apiKey) {
+  setApiKey(provider, apiKey);
+  process.stdout.write(`[STATUS] ok\n[PROVIDER] ${provider}\n[KEY_SET] yes\n`);
+  process.exit(0);
+}
+
+function cmdEnableAgent(key) {
+  const r = enableAgent(key);
+  if (!r.ok) {
+    process.stdout.write(`[STATUS] error\n[DIAGNOSTICS]\ndetail: ${r.msg}\n[END_DIAGNOSTICS]\n`);
+    process.exit(2);
+  }
+  process.stdout.write(`[STATUS] ok\n[AGENT_KEY] ${key}\n[ENABLED] yes\n`);
+  process.stdout.write(chalk.dim(`(restart any running agentalk for the change to take effect)\n`));
+  process.exit(0);
+}
+
 // ─── Dispatch ──────────────────────────────────────────────────────
 // Skip leading global flags so they don't get parsed as commands.
 // --include-claude is consumed at module load by lib/agents.js; here we just
@@ -1019,6 +1103,35 @@ if (first === "sessions")     { cmdListSessions();                    process.ex
 if (first === "inbox")        { cmdInbox();                           process.exit(0); }
 if (first === "inbox-hook")   { cmdInboxHook();                       process.exit(0); }
 if (first === "note")         { cmdNote(argv[1], argv[2]);            process.exit(0); }
+
+if (first === "add-model") {
+  const modelId = argv[1];
+  if (!modelId || modelId.startsWith("--")) {
+    console.error("Usage: agentalk-delegate add-model <model-id> [--key <api-key>] [--endpoint <url>] [--enable]");
+    console.error("  e.g. agentalk-delegate add-model deepseek/deepseek-chat --key sk-xxx --enable");
+    process.exit(2);
+  }
+  cmdAddModel(modelId);
+}
+
+if (first === "set-key") {
+  const provider = argv[1];
+  const apiKey = argv[2];
+  if (!provider || !apiKey || provider.startsWith("--") || apiKey.startsWith("--")) {
+    console.error("Usage: agentalk-delegate set-key <provider> <api-key>");
+    process.exit(2);
+  }
+  cmdSetKey(provider, apiKey);
+}
+
+if (first === "enable") {
+  const key = argv[1];
+  if (!key || key.startsWith("--")) {
+    console.error("Usage: agentalk-delegate enable <agent-key>");
+    process.exit(2);
+  }
+  cmdEnableAgent(key);
+}
 
 if (first === "register-session") {
   const name = argv[1];

@@ -180,7 +180,7 @@ Ctrl+C          interrupt
 
 ### Adding API model agents
 
-Any OpenAI-compatible model can be added as an agent:
+Any OpenAI-compatible model can be added as an agent. A model only needs an **id** and an **API key** — the endpoint is auto-resolved for known providers (openai, deepseek, groq, moonshot, zhipu, mistral, together, xai, cursor). For an unknown provider, also set a base URL with `/agents set-endpoint <provider> <url>`.
 
 ```bash
 # OpenRouter
@@ -203,7 +203,21 @@ Any OpenAI-compatible model can be added as an agent:
 # Switch model: /agents model cursor cursor/gpt-4o
 ```
 
+**Added ≠ enabled.** A newly added model (or any agent added via `/agents add`) lands **disabled** — these are usually pay-per-call APIs, and adding one should never silently start billing. Set the key, then `/agents enable <key>` to turn it on. This matches the built-in pay-per-call agents, which also ship disabled.
+
 New API agents are automatically placed second-to-last so the CLI-based moderator (default: last agent) stays at the end of the debate order.
+
+#### Provisioning a model headlessly (from a script or another agent)
+
+The same flow is available without the interactive REPL, so an AI client (or a delegate) can provision a model when you just tell it the model id and key:
+
+```bash
+agentalk-delegate add-model deepseek/deepseek-chat --key sk-... --enable
+agentalk-delegate set-key <provider> <api-key>     # store/replace a provider key
+agentalk-delegate enable <agent-key>               # turn on a disabled agent
+```
+
+`add-model` prints `[STATUS] ok` plus `[AGENT_KEY]`, `[ENABLED]`, `[KEY_SET]`, and a `[NEXT_STEPS]` block listing exactly what's left (set key / enable / set endpoint), so the caller can finish provisioning deterministically. Without `--enable` the model is added disabled.
 
 ### Stopping discussions
 
