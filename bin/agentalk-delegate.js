@@ -135,7 +135,7 @@ async function cmdDelegate(agent, task) {
   // default or supervisor's DEFAULT_INACTIVITY_SEC.
   const inactivityStr = argValue("--inactivity-sec");
   let inactivitySec = null;
-  if (inactivityStr !== undefined) {
+  if (inactivityStr !== null) {
     const n = parseInt(inactivityStr, 10);
     if (isNaN(n) || n < 0) {
       console.error(`Invalid --inactivity-sec value: ${inactivityStr}. Expected non-negative integer (0 = disable).`);
@@ -1053,6 +1053,13 @@ function cmdAddModel(modelId) {
   process.stdout.write(`[PROVIDER] ${provider}\n`);
   process.stdout.write(`[ENABLED] ${r.enabled ? "yes" : "no"}\n`);
   process.stdout.write(`[KEY_SET] ${haveKey ? "yes" : "no"}\n`);
+  // GLM has two billing pools that share key format: zhipu open platform
+  // (bigmodel.cn, pay-per-token) vs z.ai GLM Coding Plan (subscription). A
+  // Coding Plan key on the zhipu endpoint returns "1113 余额不足". If we routed
+  // to zhipu without an explicit endpoint, surface the z.ai alternative.
+  if (provider === "zhipu" && !endpoint) {
+    process.stdout.write(`[HINT] GLM key 有两套计费池。若这是 z.ai GLM Coding Plan（订阅套餐）的 key，标准智谱端点会报 "1113 余额不足"；改用编程套餐端点：agentalk-delegate add-model zai/${model} --key <key> --enable\n`);
+  }
   // Tell the caller exactly what's left so an agent can finish provisioning.
   const todo = [];
   if (!haveKey) todo.push(`set the API key:  agentalk-delegate set-key ${provider} <api-key>`);
