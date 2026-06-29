@@ -5,7 +5,7 @@
 If you're on Claude Max + Gemini Plus + ChatGPT Pro + GLM Pro (or any mix), you usually have one main agent doing most of the work while the others sit idle — Codex at 100% this week, Gemini with headroom under its hidden rate limits, GLM barely touched. AgenTalk offers two patterns for putting that slack to work:
 
 ### 🏛️ Committee — `agentalk`
-Gather Claude, Codex, Gemini, OpenCode into a shared panel. Pick a mode: discuss in parallel rounds, debate in turns, panel-first-then-debate, brainstorm for divergence, challenge adversarially, deepen root causes. For **decisions that benefit from multiple expert perspectives** — architecture, stress-testing proposals, root-cause analysis — you're not stuck asking one model. The room debates, a moderator converges, you read the transcript.
+Gather Claude, Codex, Gemini, ZCode into a shared panel. Pick a mode: discuss in parallel rounds, debate in turns, panel-first-then-debate, brainstorm for divergence, challenge adversarially, deepen root causes. For **decisions that benefit from multiple expert perspectives** — architecture, stress-testing proposals, root-cause analysis — you're not stuck asking one model. The room debates, a moderator converges, you read the transcript.
 
 ### 🤝 Colleague — `agentalk-delegate`
 Let your main AI agent (typically Claude Code) quietly hand off a sub-task to another CLI — reading a 60-page spec, translating bulk text, generating a shell script, scanning a big codebase. The main agent decides WHAT and WHO; a deterministic supervisor executes, observes quota signals, returns structured findings. **Spreads load across all your subscriptions**, preserves main-model context budget, and the main agent reports back to you transparently ("Used Gemini to read the spec, saved ~40k tokens of context").
@@ -25,7 +25,7 @@ The two are independent binaries and can be used separately:
 - **API model agents** — plug in any OpenAI-compatible model (OpenRouter, DeepSeek, Groq, etc.) via `/agents add-model`
 - **Token usage tracking** — per-agent token counts shown at the end of every discussion; real counts for API agents, estimates for CLI agents
 - **Moderator placement** — moderator defaults to the last active agent; new agents auto-insert at second-to-last
-- **22-agent registry** — 3 enabled by default (Codex, Gemini, OpenCode). Claude is shipped disabled to avoid double-billing when agentalk runs inside Claude Code (the `claude` CLI shares the host's quota); enable with `/agents enable claude` from a plain terminal, or pass `--include-claude` for a one-off override. Enable Aider, Ollama, Amazon Q, Goose, SWE-agent and more via `/agents enable`
+- **22-agent registry** — 3 enabled by default (Codex, Gemini, ZCode). OpenCode is shipped disabled in favor of ZCode (both run the GLM Coding Plan; ZCode is z.ai's native harness) — enable with `/agents enable opencode`. Claude is shipped disabled to avoid double-billing when agentalk runs inside Claude Code (the `claude` CLI shares the host's quota); enable with `/agents enable claude` from a plain terminal, or pass `--include-claude` for a one-off override. Enable Aider, Ollama, Amazon Q, Goose, SWE-agent and more via `/agents enable`
 - **Shared context** — all agents see the same conversation history (up to 512k tokens, auto-compressed via moderator summary)
 - **Moderator pre-flight** — detects URLs in your topic, fetches them, reads mentioned files, synthesizes a `[BRIEFING]` injected into context before round 1
 - **Headless mode** — all six mode flags run a session and exit; `--verbose` streams output in real time
@@ -64,7 +64,8 @@ All modes support `@mentions` to select participants, `--rounds`/`--turns N`, an
 claude    # Claude Code        → claude.ai/code
 codex     # OpenAI Codex CLI   → github.com/openai/codex
 gemini    # Google Gemini CLI  → github.com/google-gemini/gemini-cli
-opencode  # OpenCode CLI       → opencode.ai
+zcode     # ZCode (GLM)        → zcode.z.ai   (see "ZCode setup" below)
+opencode  # OpenCode CLI       → opencode.ai  (disabled by default)
 ```
 
 AgenTalk works with any subset of the above — inactive CLIs are automatically skipped.
@@ -188,6 +189,42 @@ Any OpenAI-compatible model can be added as an agent. A model only needs an **id
 /agents set-key zai <your-z.ai-coding-plan-key>
 /agents add-model zai/glm-4.6
 ```
+
+#### ZCode setup (the default GLM agent)
+
+`zcode` is enabled by default and runs the **GLM Coding Plan** through ZCode, z.ai's own coding agent. Unlike the `zai/...` route above (a raw OpenAI-compatible API call), ZCode is a full agent harness with its own tools, retries, and skills, so it handles flaky networks and multi-step tasks better.
+
+The ZCode CLI ships *inside* the ZCode desktop app, not as a standalone npm package:
+
+1. Install the ZCode app from [zcode.z.ai](https://zcode.z.ai). The CLI lands at `…/ZCode.app/Contents/Resources/glm/zcode.cjs`.
+2. It needs a Node runtime with the built-in `node:sqlite` module (**Node 22.5+**); the system default node may be older. Put a `zcode` wrapper on your `PATH` that pins a new-enough node:
+
+   ```sh
+   #!/bin/sh
+   ZCODE_CJS="/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs"
+   exec "${ZCODE_NODE:-$(command -v node)}" "$ZCODE_CJS" "$@"
+   ```
+
+3. Set the model and key once in `~/.zcode/cli/config.json`. Note `model.main` is a `"providerId/modelId"` **string**, and the provider's key/URL live in a separate `provider` map:
+
+   ```json
+   {
+     "provider": {
+       "zai-coding-plan": {
+         "kind": "anthropic",
+         "options": {
+           "baseURL": "https://api.z.ai/api/anthropic",
+           "apiKey": "<your-z.ai-coding-plan-key>"
+         }
+       }
+     },
+     "model": { "main": "zai-coding-plan/glm-5.2" }
+   }
+   ```
+
+   (Or run `zcode login` once to sign in with Z.AI OAuth instead of an API key.)
+
+AgenTalk calls it headlessly as `zcode --prompt "<task>" --mode yolo`. If `which zcode` fails, the agent is auto-skipped like any other missing CLI.
 
 ```bash
 # OpenRouter
@@ -435,6 +472,7 @@ AgenTalk never calls LLM APIs directly for CLI agents. It spawns each agent's CL
 claude -p "..."
 codex exec --skip-git-repo-check "..."
 gemini -p "..."
+zcode --prompt "..." --mode yolo
 opencode run "..." --format json
 ```
 

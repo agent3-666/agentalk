@@ -1,6 +1,6 @@
 ---
 name: agentalk-delegate
-description: Delegate a sub-task to another AI CLI (Gemini, Codex, GLM-via-OpenCode) when you can clearly see that doing so will save main-model context or produce a better result. Invoke autonomously on CONCRETE signals — long-doc reading (>10 pages / >20 files / PDF), bulk translation, one-shot shell/boilerplate code generation, mechanical transformations. Calls via `agentalk-delegate` CLI binary (Bash tool, no MCP setup required). Returns structured [MARKER] output the skill parses into findings + artifacts + diagnostics.
+description: Delegate a sub-task to another AI CLI (Gemini, Codex, GLM-via-ZCode) when you can clearly see that doing so will save main-model context or produce a better result. Invoke autonomously on CONCRETE signals — long-doc reading (>10 pages / >20 files / PDF), bulk translation, one-shot shell/boilerplate code generation, mechanical transformations. Calls via `agentalk-delegate` CLI binary (Bash tool, no MCP setup required). Returns structured [MARKER] output the skill parses into findings + artifacts + diagnostics.
 user-invocable: true
 allowed-tools:
   - Bash
@@ -47,15 +47,15 @@ If you're unsure, run `agentalk-delegate capabilities` — it prints the badges 
 | PDF / OCR / image analysis | `gemini` | multimodal |
 | Scan whole repo for pattern X (grep-level question) | `gemini` | reads files for you |
 | Bug hunting across many files in a big codebase | `gemini` | long-context scan |
-| Translation between human languages (EN↔ZH etc.) | `opencode` (GLM) | cheap, strong Chinese |
-| Bulk mechanical transformation (N items → N items) | `opencode` (GLM) | low cost tier |
-| Chinese-heavy text writing / rewriting | `opencode` (GLM) | native strength |
+| Translation between human languages (EN↔ZH etc.) | `zcode` (GLM) | cheap, strong Chinese |
+| Bulk mechanical transformation (N items → N items) | `zcode` (GLM) | low cost tier |
+| Chinese-heavy text writing / rewriting | `zcode` (GLM) | native strength |
 | One-shot shell script / scaffolding / `Makefile` / boilerplate | `codex` | code-focused, fast |
 | "Generate N fixtures / test data" | `codex` | bounded, structural |
 | Quick code edits in known files | `codex` | iteration speed |
 | Bug hunting in CLI / shell / infra code | `codex` | shell strength |
 
-These are the three **preferred subscription** agents (`gemini`, `codex`, `opencode`). Use them freely — the user has subscriptions already paid.
+These are the three **preferred subscription** agents (`gemini`, `codex`, `zcode`). Use them freely — the user has subscriptions already paid. (`zcode` runs the GLM Coding Plan via z.ai's native harness; `opencode` is the same GLM plan through a different harness and ships disabled — enable it if you specifically want OpenCode.)
 
 **Task sizing — don't over-trim out of fear.** The default delegation timeout is **600 seconds** (10 min), not 180s. If you previously saw a `timeout` error at 180s in an earlier conversation or session, that was the OLD default and is no longer relevant. Gemini can comfortably handle 9–15 file structured surveys within 600s. Trust the default; don't self-limit to 3-5 files unless the task genuinely is small. For truly heavy tasks (20+ files, long PDFs) pass `--timeout 1200`. Partial timeouts auto-return whatever was captured as `[STATUS] timeout_partial` — nothing is lost.
 
@@ -150,7 +150,7 @@ The `[TASK]` path points to a `.jsonl` — **one event per line** (task_created,
 - `[STATUS] ok` → use `[FINDINGS]`, continue
 - `[STATUS] timeout_partial` → **partial output is real data**. Inspect `[FINDINGS]` — often usable (e.g. "got 6/9 files analyzed"). Either (a) accept what's there + do the rest yourself, (b) retry with `--timeout 1200` for the whole thing, or (c) use `--resume-step <task-id>:<step-id>` on a second delegation to continue from where the delegate left off
 - `[STATUS] timeout` (no partial) → delegate crashed before producing anything useful. Retry with larger `--timeout`, switch agent, or do it yourself
-- `[STATUS] quota_exceeded` → read `[DIAGNOSTICS]` for `suggestion` (alternative agent). Either retry with that agent, OR surface to user: "Gemini is rate-limited (resets in ~3h). I can use GLM via OpenCode instead, or we can pause."
+- `[STATUS] quota_exceeded` → read `[DIAGNOSTICS]` for `suggestion` (alternative agent). Either retry with that agent, OR surface to user: "Gemini is rate-limited (resets in ~3h). I can use GLM via ZCode instead, or we can pause."
 - `[STATUS] auth_failed` → surface to user: "This CLI isn't authenticated. Run `<cli> login` first."
 - `[STATUS] failed` / `system_error` → read `detail`, reframe the task or fall back to doing it yourself
 
@@ -206,7 +206,7 @@ Turn this into a **one-line visible-value statement** in your user-facing reply.
 
 - `✓ Used **Gemini (gemini-2.5-pro)** to extract design decisions — saved ~12k tokens of my context.`
 - `✓ Delegated spec reading to **Gemini (gemini-2.5-pro)** (~12k main-context tokens saved).`
-- `✓ Handed off to **OpenCode (GLM)** for the translation — used ~300 tokens of GLM quota, zero of mine.`
+- `✓ Handed off to **ZCode (GLM)** for the translation — used ~300 tokens of GLM quota, zero of mine.`
 
 Include **agent display name + model + what was accomplished + tokens saved**. One line, in natural English/Chinese, mixed into your reply where relevant (usually right before presenting the findings or right at the top of your response).
 
@@ -242,8 +242,8 @@ When sub-tasks logically belong to one "piece of work" across agents, share the 
 agentalk-delegate gemini "Extract decisions from ./spec.md" --files "./spec.md"
 # → [TASK_ID] t_abc
 
-# Step 2: OpenCode translates (different agent, same task)
-agentalk-delegate opencode "Translate previous step's findings to Chinese" \
+# Step 2: ZCode (GLM) translates (different agent, same task)
+agentalk-delegate zcode "Translate previous step's findings to Chinese" \
   --task-id t_abc \
   --context "Step 1 produced a decision list; translate preserving numbering."
 ```
@@ -331,6 +331,8 @@ agentalk-delegate add-model zai/glm-4.6 --key <z.ai-coding-plan-key> --enable
 ```
 
 When a bare `glm-*` add resolves to `zhipu`, `add-model` emits a `[HINT]` line pointing at the `zai/` alternative — surface it if the user mentions a "coding plan" or z.ai key.
+
+**Prefer `zcode` over a raw `zai/` model for GLM Coding Plan users.** The `zcode` agent (enabled by default) runs the same GLM Coding Plan subscription through ZCode, z.ai's native agent harness — it has its own retries and tools, so it survives flaky networks and multi-step work better than a bare `/chat/completions` call. The ZCode CLI ships inside the ZCode desktop app (`…/ZCode.app/Contents/Resources/glm/zcode.cjs`) and needs a `node:sqlite`-capable runtime (Node 22.5+); the recommended setup is a `zcode` wrapper on PATH plus `~/.zcode/cli/config.json` holding the provider key + model (see README "ZCode setup"). The raw `zai/glm-4.6` route stays available as a lightweight fallback.
 
 `add-model` emits parseable markers:
 - `[STATUS] ok` / `error`
