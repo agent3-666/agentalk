@@ -224,7 +224,15 @@ The ZCode CLI ships *inside* the ZCode desktop app, not as a standalone npm pack
 
    (Or run `zcode login` once to sign in with Z.AI OAuth instead of an API key.)
 
-AgenTalk calls it headlessly as `zcode --prompt "<task>" --mode yolo`. If `which zcode` fails, the agent is auto-skipped like any other missing CLI.
+AgenTalk calls it headlessly as `zcode --prompt "<task>" --mode yolo --verbose`. If `which zcode` fails, the agent is auto-skipped like any other missing CLI. (ZCode's headless mode is **batch, not streaming** — it works silently and prints the answer only at the end. AgenTalk runs it with `--verbose` and a generous inactivity window so a quiet-but-working zcode isn't mistaken for a hang, and a run that hits a transient `1302` but recovers with a valid answer is reported `ok`, not `failed`.)
+
+**Know what to send it.** The GLM Coding Plan is a quota-capped subscription, so `zcode` shines on **bounded coding sub-tasks** (a few files, a bug fix, tests, Chinese text) and has two limits worth respecting:
+
+- **Don't send it heavy multi-file or long agentic reviews.** A burst of internal calls trips z.ai's `1302` rate-limit, and ZCode's retry loop then spins on it for the entire `--timeout` and returns *empty* (we've seen 780s with zero output). Route large or adversarial multi-file reviews to `codex` instead. `1302` is not a normal `429` — it has no `Retry-After` and flaps — so if zcode hangs or returns nothing, switch agents rather than retrying.
+- **Coding tasks only.** z.ai actively detects and *bans* non-coding use of the Coding Plan (throttle first, permanent ban on repeat). Keep strategy / prose / brainstorming off `zcode` — send those to `codex` or `gemini`.
+- GLM-5.2 costs **3× quota during peak hours** (14:00–18:00 UTC+8); `opencode` runs the *same* GLM quota pool, so it is not a fallback when zcode is rate-limited.
+
+`agentalk-delegate capabilities` prints this guidance per agent at call time, so a delegating agent sees it before choosing a target.
 
 ```bash
 # OpenRouter
