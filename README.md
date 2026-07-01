@@ -33,6 +33,7 @@ The two are independent binaries and can be used separately:
 
 ### Delegation (`agentalk-delegate`)
 - **Deterministic supervisor kernel** — code, not an LLM. Owns task lifecycle state, observes quota signals (parses 429/rate-limit/auth from real CLI stderr), executes delegations. Main model is the policy generator; kernel is the mechanism.
+- **Rate-limit storm fast-fail** — a batch agent stuck in its provider's rate-limit retry loop (e.g. `zcode` → z.ai `1302`) produces only rate-limit errors on stderr and never any output, which would otherwise keep the child alive until the full timeout (we'd seen 23-minute silent hangs). The kernel detects that storm — sustained rate-limit stderr with zero stdout — and kills it in ~60s, returning a clean `quota_exceeded` with a suggested alternative agent. A run that hits a transient rate-limit but then recovers with real output is untouched. Match task weight to the agent: heavy multi-file / adversarial reviews go to `codex`; `zcode` (GLM Coding Plan) is for bounded coding sub-tasks and gets rate-limited on bursts, especially at peak (14:00–18:00 UTC+8, when GLM-5.2 costs 3× quota).
 - **Brief-in/brief-out protocol** — structured task + files + context + budget → structured findings + artifacts + unknowns + diagnostics
 - **Persistent task state** at `~/.agentalk/tasks/{id}.json` — written before delegation executes, so any model can resume if the main agent dies
 - **Project-level memory** at `.agentalk/memory.jsonl` (append-only JSONL, survives sessions)
@@ -228,7 +229,7 @@ AgenTalk calls it headlessly as `zcode --prompt "<task>" --mode yolo --verbose`.
 
 **Know what to send it.** The GLM Coding Plan is a quota-capped subscription, so `zcode` shines on **bounded coding sub-tasks** (a few files, a bug fix, tests, Chinese text) and has two limits worth respecting:
 
-- **Don't send it heavy multi-file or long agentic reviews.** A burst of internal calls trips z.ai's `1302` rate-limit, and ZCode's retry loop then spins on it for the entire `--timeout` and returns *empty* (we've seen 780s with zero output). Route large or adversarial multi-file reviews to `codex` instead. `1302` is not a normal `429` — it has no `Retry-After` and flaps — so if zcode hangs or returns nothing, switch agents rather than retrying.
+- **Don't send it heavy multi-file or long agentic reviews.** A burst of internal calls trips z.ai's `1302` rate-limit, and ZCode's own retry loop then spins on it producing *empty* output. AgenTalk detects this **1302 storm** — sustained rate-limit errors on stderr with zero stdout — and **fast-fails the run in ~60s** with a `quota_exceeded` signal, instead of letting it burn the full `--timeout` (we'd seen 23-minute silent timeouts before this guard). Route large or adversarial multi-file reviews to `codex` instead. `1302` is not a normal `429` — it has no `Retry-After` and flaps — so when zcode comes back rate-limited, switch agents rather than retrying.
 - **Coding tasks only.** z.ai actively detects and *bans* non-coding use of the Coding Plan (throttle first, permanent ban on repeat). Keep strategy / prose / brainstorming off `zcode` — send those to `codex` or `gemini`.
 - GLM-5.2 costs **3× quota during peak hours** (14:00–18:00 UTC+8); `opencode` runs the *same* GLM quota pool, so it is not a fallback when zcode is rate-limited.
 
