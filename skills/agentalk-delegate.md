@@ -57,10 +57,26 @@ If you're unsure, run `agentalk-delegate capabilities` — it prints the badges 
 
 These are the three **preferred subscription** agents (`gemini`, `codex`, `zcode`). Use them freely — the user has subscriptions already paid. (`zcode` runs the GLM Coding Plan via z.ai's native harness; `opencode` is the same GLM plan through a different harness and ships disabled — enable it if you specifically want OpenCode.)
 
-**⚠️ ZCode (GLM Coding Plan) has two hard limits — respect them or it fails silently:**
-- **Keep zcode tasks bounded.** It's great for a few files, a bug fix, tests, Chinese text. Do NOT send it heavy multi-file / long agentic reviews: the burst of internal calls trips z.ai's `1302` rate-limit, and zcode's retry loop then spins on it for the *entire* timeout and returns **zero output** (observed: 780s, empty). Route heavy multi-file/adversarial reviews to `codex` instead.
-- **Coding tasks only.** z.ai actively detects and *bans* non-coding use of the Coding Plan (throttle → permanent ban). Never send zcode strategy / prose / brainstorming work — those go to `codex` / `gemini`.
-- `1302` is not a normal `429` (no `Retry-After`, it flaps); if you see zcode hang or return empty, don't retry it — switch to `codex`. Also note GLM-5.2 costs 3× quota at peak (14:00–18:00 UTC+8). `opencode` shares the same GLM quota pool, so it is not an escape valve when zcode is rate-limited.
+### Using `zcode` (the GLM agent) without errors
+
+`zcode` runs the z.ai **GLM Coding Plan** through ZCode's native CLI. It's a cheap, capable coding agent — but it's a *quota-capped subscription* and a *batch* agent, so match the task to it and it just works.
+
+**✅ Good for — send these to `zcode`:**
+- Bounded code work: a bug fix, edits in a few files, writing tests, a self-contained function or script.
+- Small-to-medium coding tasks that read a handful of files (not the whole repo).
+- Chinese-heavy text or translation tied to code.
+
+**🚫 Don't send — route elsewhere:**
+- **Heavy multi-file / long adversarial reviews → `codex`.** A burst of internal calls trips z.ai's `1302` rate-limit; even with recovery this is the wrong tool for a 5+ file audit. `codex` does these fast.
+- **Anything non-coding (strategy, prose, brainstorming) → `codex` / `gemini`.** z.ai actively detects and *bans* non-coding use of the Coding Plan (throttle first, permanent ban on repeat). This is a hard rule.
+
+**How to call it (standard, no special flags needed):**
+```bash
+agentalk-delegate zcode "fix the off-by-one in parse_range() in src/util.py and add a test"
+```
+The default args already include `--verbose` (so a silently-working zcode isn't mistaken for a hang) and a 900s inactivity window. Don't pass a tiny `--inactivity-sec` — zcode is batch (silent until the final answer), so a short window will kill a healthy run. Use the default `--timeout` (600s) for normal tasks.
+
+**If it returns empty or you see `1302` / quota_exceeded:** the account is rate-limited, not broken. Causes: the 5-hour quota bucket is drained, or it's peak hours (14:00–18:00 UTC+8, when GLM-5.2 costs 3× quota). **Don't retry-spam it** (`1302` has no `Retry-After` and flaps) — switch to `codex` and let the bucket refill. `opencode` shares the *same* GLM pool, so it's not an escape valve. A run that hits a transient `1302` but recovers with a valid answer now reports `[STATUS] ok` with findings — that's expected, not a failure.
 
 **Task sizing — don't over-trim out of fear.** The default delegation timeout is **600 seconds** (10 min), not 180s. If you previously saw a `timeout` error at 180s in an earlier conversation or session, that was the OLD default and is no longer relevant. Gemini can comfortably handle 9–15 file structured surveys within 600s. Trust the default; don't self-limit to 3-5 files unless the task genuinely is small. For truly heavy tasks (20+ files, long PDFs) pass `--timeout 1200`. Partial timeouts auto-return whatever was captured as `[STATUS] timeout_partial` — nothing is lost.
 
