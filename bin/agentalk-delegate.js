@@ -844,7 +844,7 @@ function cmdInbox() {
   inbox.forEach((r, i) => {
     const date = r.ts.slice(0, 19).replace("T", " ");
     console.log(`  ${chalk.dim((i + 1).toString().padStart(2) + ".")} [${chalk.cyan(date)}] from ${chalk.bold(r.from_caller || "?")} → ${chalk.dim(`@${r.session_name}`)}`);
-    console.log(`      ${chalk.bold("ask:")}     ${r.task_summary}`);
+    console.log(`      ${chalk.bold("ask:")}     ${r.message || r.task_summary}`);
     if (r.findings_preview) {
       console.log(`      ${chalk.bold("preview:")} ${chalk.dim(r.findings_preview.slice(0, 200))}`);
     }
@@ -872,7 +872,11 @@ function cmdInboxHook() {
   const lines = unseen.map(r => {
     const when = (r.ts || "").slice(0, 16).replace("T", " ");
     if (r.kind === "note") {
-      return `• [${when}] 留言 from ${r.from_caller || "?"}: ${r.task_summary || r.content || ""}`;
+      // Surface the FULL note to the recipient. Cap only for context safety on
+      // pathologically long notes; the full text is always in `agentalk-delegate inbox`.
+      const full = r.message || r.task_summary || r.content || "";
+      const shown = full.length > 4000 ? full.slice(0, 4000) + "…(截断,完整见 agentalk-delegate inbox)" : full;
+      return `• [${when}] 留言 from ${r.from_caller || "?"}: ${shown}`;
     }
     const ask = r.task_summary || "(no summary)";
     const out = r.outcome ? ` → ${r.outcome}` : "";
@@ -916,7 +920,11 @@ function cmdNote(target, message) {
   const p = appendInbox(cwd, {
     kind: "note",
     from_caller: argValue("--from") || "cli",
-    task_summary: message.slice(0, 300),
+    // Store the FULL message — never truncate at write time (silent data loss).
+    // `task_summary` is only a short preview for compact list views; readers
+    // that surface the note to the recipient (inbox-hook, `inbox`) use `message`.
+    message,
+    task_summary: message.length > 200 ? message.slice(0, 200) + "…" : message,
     outcome: "note",
   });
   console.log(p ? `✓ 留言已投递到 ${p}` : `✗ 投递失败(目标 cwd 不可写: ${cwd})`);
